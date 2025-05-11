@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
-use fedimint_core::config::FederationId;
+use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_lnv2_common::contracts::IncomingContract;
 use iroh_docs::{
     DocTicket,
@@ -9,10 +9,11 @@ use iroh_docs::{
         client::docs::{Doc, ShareMode},
         proto::RpcService,
     },
+    store::Query,
 };
 use quic_rpc::client::FlumeConnector;
 
-use crate::shared::SharedProtocol;
+use crate::shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
 
@@ -68,6 +69,28 @@ impl MachineProtocol {
         .await
         .unwrap();
         Ok(())
+    }
+
+    pub async fn get_federation_invite_code(&self) -> anyhow::Result<Option<InviteCode>> {
+        let Some(entry) = self
+            .get_or_create_machine_doc()
+            .await?
+            .get_one(Query::key_exact(FEDERATION_INVITE_CODE_KEY))
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let bytes = self
+            .shared_protocol
+            .get_blobs()
+            .client()
+            .read_to_bytes(entry.content_hash())
+            .await?;
+
+        Ok(Some(InviteCode::from_str(&String::from_utf8(
+            bytes.to_vec(),
+        )?)?))
     }
 
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data

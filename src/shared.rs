@@ -8,12 +8,14 @@ use iroh_docs::{ALPN as DOCS_ALPN, AuthorId, protocol::Docs};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, net::Gossip};
 
 const INCOMING_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
+pub const FEDERATION_INVITE_CODE_KEY: [u8; 2] = [0x02, 0xFF];
 
 const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
 
 pub struct SharedProtocol {
     router: Router,
+    blobs: Blobs<iroh_blobs::store::fs::Store>,
     docs: Docs<iroh_blobs::store::fs::Store>,
     app_storage_path: PathBuf,
 }
@@ -53,6 +55,7 @@ impl SharedProtocol {
 
         Ok(Self {
             router,
+            blobs,
             docs,
             app_storage_path,
         })
@@ -80,6 +83,10 @@ impl SharedProtocol {
         let contract_id_hash_bytes: [u8; 32] = *incoming_contract.contract_id().0.as_ref();
         key.append(&mut contract_id_hash_bytes.to_vec());
         key
+    }
+
+    pub fn get_blobs(&self) -> &Blobs<iroh_blobs::store::fs::Store> {
+        &self.blobs
     }
 
     pub fn get_docs(&self) -> &Docs<iroh_blobs::store::fs::Store> {
