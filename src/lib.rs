@@ -56,7 +56,12 @@ mod tests {
             .share_machine_doc(ShareMode::Write, AddrInfoOptions::Id)
             .await?;
 
-        manager_protocol.add_machine(machine_doc_ticket).await?;
+        assert_eq!(manager_protocol.list_machines().unwrap().len(), 0);
+
+        let machine_id = manager_protocol.add_machine(machine_doc_ticket).await?;
+
+        assert!(manager_protocol.get_machine(&machine_id).is_ok());
+        assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         Ok(())
     }

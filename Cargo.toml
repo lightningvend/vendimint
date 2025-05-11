@@ -13,6 +13,7 @@ iroh-docs = { version = "0.34.0", features = ["rpc"] }
 iroh-gossip = "0.34.1"
 quic-rpc = "0.19.0"
 serde_json = "1.0.140"
+uuid = { version = "1.16.0", features = ["v4"] }
 
 [dev-dependencies]
 fedimint-tpe = "0.7.1"

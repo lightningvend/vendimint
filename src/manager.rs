@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use iroh_docs::{Capability, DocTicket};
+use uuid::Uuid;
 
 use crate::shared::SharedProtocol;
 
@@ -32,8 +33,8 @@ impl ManagerProtocol {
         self.shared_protocol.is_shutdown()
     }
 
-    pub async fn add_machine(&self, machine_doc_ticket: DocTicket) -> anyhow::Result<()> {
-        let Capability::Write(namespace_secret) = machine_doc_ticket.capability.clone() else {
+    pub async fn add_machine(&self, machine_doc_ticket: DocTicket) -> anyhow::Result<Uuid> {
+        let Capability::Write(_) = machine_doc_ticket.capability.clone() else {
             return Err(anyhow::anyhow!(
                 "Machine doc ticket must have write capability"
             ));
@@ -47,14 +48,44 @@ impl ManagerProtocol {
             .import(machine_doc_ticket)
             .await?;
 
+        let machine_id = Uuid::new_v4();
+
         std::fs::write(
             self.get_machine_doc_ticket_path()
-                .join(namespace_secret.to_string()),
+                .join(machine_id.to_string()),
             machine_doc_ticket_str,
         )
         .unwrap();
 
-        Ok(())
+        Ok(machine_id)
+    }
+
+    pub fn get_machine(&self, machine_id: &Uuid) -> anyhow::Result<DocTicket> {
+        let machine_doc_ticket_path = self
+            .get_machine_doc_ticket_path()
+            .join(machine_id.to_string());
+        let machine_doc_ticket_str = std::fs::read_to_string(&machine_doc_ticket_path)?;
+        let machine_doc_ticket: DocTicket = serde_json::from_str(&machine_doc_ticket_str)?;
+        Ok(machine_doc_ticket)
+    }
+
+    pub fn list_machines(&self) -> anyhow::Result<Vec<(Uuid, DocTicket)>> {
+        let machine_doc_tickets_path = self.get_machine_doc_ticket_path();
+        let mut machines = Vec::new();
+
+        for entry in std::fs::read_dir(machine_doc_tickets_path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                let file_name = entry.file_name().into_string().unwrap();
+                let machine_id = Uuid::parse_str(&file_name).unwrap();
+                let machine_doc_ticket_str = std::fs::read_to_string(entry.path())?;
+                let machine_doc_ticket: DocTicket =
+                    serde_json::from_str(&machine_doc_ticket_str).unwrap();
+                machines.push((machine_id, machine_doc_ticket));
+            }
+        }
+
+        Ok(machines)
     }
 
     fn get_machine_doc_ticket_path(&self) -> PathBuf {
