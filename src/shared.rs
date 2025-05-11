@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use fedimint_core::{config::FederationId, db::DatabaseValue};
 use fedimint_lnv2_common::contracts::IncomingContract;
 use iroh::{Endpoint, protocol::Router};
 use iroh_blobs::{ALPN as BLOBS_ALPN, net_protocol::Blobs};
@@ -71,9 +72,11 @@ impl SharedProtocol {
     }
 
     pub fn create_incoming_contract_machine_doc_key(
+        federation_id: &FederationId,
         incoming_contract: &IncomingContract,
     ) -> Vec<u8> {
         let mut key = INCOMING_CONTRACT_PREFIX.to_vec();
+        key.append(&mut federation_id.0.to_bytes());
         let contract_id_hash_bytes: [u8; 32] = *incoming_contract.contract_id().0.as_ref();
         key.append(&mut contract_id_hash_bytes.to_vec());
         key

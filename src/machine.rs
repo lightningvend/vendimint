@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use fedimint_core::config::FederationId;
 use fedimint_lnv2_common::contracts::IncomingContract;
 use iroh_docs::{
     DocTicket,
@@ -49,11 +50,15 @@ impl MachineProtocol {
 
     pub async fn write_payment_to_machine_doc(
         &self,
-        incoming_contract: IncomingContract,
+        federation_id: &FederationId,
+        incoming_contract: &IncomingContract,
     ) -> anyhow::Result<()> {
         let doc = self.get_or_create_machine_doc().await?;
 
-        let key = SharedProtocol::create_incoming_contract_machine_doc_key(&incoming_contract);
+        let key = SharedProtocol::create_incoming_contract_machine_doc_key(
+            federation_id,
+            incoming_contract,
+        );
 
         doc.set_bytes(
             self.shared_protocol.get_author_id().await?,

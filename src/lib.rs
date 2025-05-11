@@ -14,7 +14,7 @@ mod tests {
 
     use super::*;
 
-    use fedimint_core::Amount;
+    use fedimint_core::{Amount, config::FederationId};
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use iroh_docs::rpc::{AddrInfoOptions, client::docs::ShareMode};
     use machine::MachineProtocol;
@@ -34,6 +34,8 @@ mod tests {
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
         )?;
 
+        let federation_id = FederationId::dummy();
+
         let incoming_contract = IncomingContract::new(
             AggregatePublicKey(G1Affine::identity()),
             [127; 32],
@@ -47,7 +49,7 @@ mod tests {
         );
 
         machine_protocol
-            .write_payment_to_machine_doc(incoming_contract)
+            .write_payment_to_machine_doc(&federation_id, &incoming_contract)
             .await?;
 
         let machine_doc_ticket = machine_protocol
