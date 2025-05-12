@@ -1,21 +1,36 @@
-[package]
-name = "protocol"
-edition = "2024"
+[workspace]
+members = [
+    "machine",
+    "manager",
+    "shared",
+    "tests"
+]
+resolver = "3"
 
-[dependencies]
+[workspace.lints.clippy]
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+missing_const_for_fn = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+option_if_let_else = "allow"
+
+[workspace.dependencies]
 anyhow = "1.0.98"
 bincode = { version = "2.0.1", features = ["serde"] }
 fedimint-core = "0.7.1"
 fedimint-lnv2-common = "0.7.1"
+fedimint-tpe = "0.7.1"
 iroh = { version = "0.34.1", features = ["discovery-local-network"] }
 iroh-blobs = "0.34.1"
 iroh-docs = { version = "0.34.0", features = ["rpc"] }
 iroh-gossip = "0.34.1"
+machine = { path = "./machine" }
+manager = { path = "./manager" }
 quic-rpc = "0.19.0"
 serde_json = "1.0.140"
-uuid = { version = "1.16.0", features = ["v4"] }
-
-[dev-dependencies]
-fedimint-tpe = "0.7.1"
+shared = { path = "./shared" }
 tempfile = "3.19.1"
-tokio = "1.45.0"
+tokio = { version = "1.45.0", features = ["macros", "rt"] }
+uuid = { version = "1.16.0", features = ["v4"] }

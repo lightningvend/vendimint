@@ -1,0 +1,16 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+fedimint-core = { workspace = true }
+fedimint-lnv2-common = { workspace = true }
+iroh = { workspace = true }
+iroh-blobs = { workspace = true }
+iroh-docs = { workspace = true }
+iroh-gossip = { workspace = true }

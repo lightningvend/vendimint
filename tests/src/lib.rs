@@ -1,20 +1,8 @@
-#![warn(clippy::pedantic, clippy::nursery)]
-#![allow(clippy::missing_const_for_fn)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::option_if_let_else)]
-
-pub mod machine;
-pub mod manager;
-mod shared;
-
 #[cfg(test)]
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use super::*;
-
-    use fedimint_core::{config::FederationId, invite_code::InviteCode, Amount};
+    use fedimint_core::{Amount, config::FederationId, invite_code::InviteCode};
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use iroh_docs::rpc::{AddrInfoOptions, client::docs::ShareMode};
     use machine::MachineProtocol;
@@ -67,7 +55,9 @@ mod tests {
 
         let invite_code = InviteCode::from_str("fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562").unwrap();
 
-        manager_protocol.set_federation_invite_code(&machine_id, &invite_code).await?;
+        manager_protocol
+            .set_federation_invite_code(&machine_id, &invite_code)
+            .await?;
 
         // Wait for the machine protocol to receive the invite code.
         for i in 0..10 {
@@ -81,7 +71,10 @@ mod tests {
             }
         }
 
-        assert_eq!(machine_protocol.get_federation_invite_code().await?, Some(invite_code));
+        assert_eq!(
+            machine_protocol.get_federation_invite_code().await?,
+            Some(invite_code)
+        );
 
         Ok(())
     }

@@ -4,7 +4,7 @@ use fedimint_core::{db::DatabaseValue, invite_code::InviteCode};
 use iroh_docs::{Capability, DocTicket};
 use uuid::Uuid;
 
-use crate::shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
+use shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
 

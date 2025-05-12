@@ -13,7 +13,7 @@ use iroh_docs::{
 };
 use quic_rpc::client::FlumeConnector;
 
-use crate::shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
+use shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
 
