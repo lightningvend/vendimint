@@ -1,6 +1,6 @@
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
-use fedimint_core::{config::FederationId, invite_code::InviteCode};
+use fedimint_core::config::FederationId;
 use fedimint_lnv2_common::contracts::IncomingContract;
 use iroh_docs::{
     DocTicket,
@@ -13,7 +13,7 @@ use iroh_docs::{
 };
 use quic_rpc::client::FlumeConnector;
 
-use shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
+use shared::{FEDERATION_INVITE_CODE_KEY, MachineConfig, SharedProtocol};
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
 
@@ -71,7 +71,7 @@ impl MachineProtocol {
         Ok(())
     }
 
-    pub async fn get_federation_invite_code(&self) -> anyhow::Result<Option<InviteCode>> {
+    pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
         let Some(entry) = self
             .get_or_create_machine_doc()
             .await?
@@ -88,9 +88,7 @@ impl MachineProtocol {
             .read_to_bytes(entry.content_hash())
             .await?;
 
-        Ok(Some(InviteCode::from_str(&String::from_utf8(
-            bytes.to_vec(),
-        )?)?))
+        Ok(Some(serde_json::from_slice(&bytes)?))
     }
 
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data

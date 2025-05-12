@@ -6,6 +6,7 @@ mod tests {
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use iroh_docs::rpc::{AddrInfoOptions, client::docs::ShareMode};
     use machine::MachineProtocol;
+    use shared::MachineConfig;
     use tpe::{AggregatePublicKey, G1Affine};
 
     #[tokio::test]
@@ -51,17 +52,21 @@ mod tests {
         assert!(manager_protocol.get_machine(&machine_id).is_ok());
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
-        assert_eq!(machine_protocol.get_federation_invite_code().await?, None);
+        assert_eq!(machine_protocol.get_machine_config().await?, None);
 
-        let invite_code = InviteCode::from_str("fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562").unwrap();
+        let federation_invite_code = InviteCode::from_str("fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562").unwrap();
+
+        let machine_config = MachineConfig {
+            federation_invite_code,
+        };
 
         manager_protocol
-            .set_federation_invite_code(&machine_id, &invite_code)
+            .set_machine_config(&machine_id, &machine_config)
             .await?;
 
         // Wait for the machine protocol to receive the invite code.
         for i in 0..10 {
-            if let Ok(Some(_)) = machine_protocol.get_federation_invite_code().await {
+            if let Ok(Some(_)) = machine_protocol.get_machine_config().await {
                 break;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -72,8 +77,8 @@ mod tests {
         }
 
         assert_eq!(
-            machine_protocol.get_federation_invite_code().await?,
-            Some(invite_code)
+            machine_protocol.get_machine_config().await?,
+            Some(machine_config)
         );
 
         Ok(())

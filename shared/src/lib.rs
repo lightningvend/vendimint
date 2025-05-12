@@ -1,14 +1,20 @@
 use std::path::{Path, PathBuf};
 
-use fedimint_core::{config::FederationId, db::DatabaseValue};
+use fedimint_core::{config::FederationId, db::DatabaseValue, invite_code::InviteCode};
 use fedimint_lnv2_common::contracts::IncomingContract;
 use iroh::{Endpoint, protocol::Router};
 use iroh_blobs::{ALPN as BLOBS_ALPN, net_protocol::Blobs};
 use iroh_docs::{ALPN as DOCS_ALPN, AuthorId, protocol::Docs};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, net::Gossip};
+use serde::{Deserialize, Serialize};
 
 const INCOMING_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
 pub const FEDERATION_INVITE_CODE_KEY: [u8; 2] = [0x02, 0xFF];
+
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct MachineConfig {
+    pub federation_invite_code: InviteCode,
+}
 
 const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";

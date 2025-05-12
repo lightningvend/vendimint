@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use fedimint_core::{db::DatabaseValue, invite_code::InviteCode};
+use fedimint_core::db::DatabaseValue;
 use iroh_docs::{Capability, DocTicket};
 use uuid::Uuid;
 
-use shared::{FEDERATION_INVITE_CODE_KEY, SharedProtocol};
+use shared::{FEDERATION_INVITE_CODE_KEY, MachineConfig, SharedProtocol};
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
 
@@ -89,10 +89,10 @@ impl ManagerProtocol {
         Ok(machines)
     }
 
-    pub async fn set_federation_invite_code(
+    pub async fn set_machine_config(
         &self,
         machine_id: &Uuid,
-        invite_code: &InviteCode,
+        machine_config: &MachineConfig,
     ) -> anyhow::Result<()> {
         let machine_doc_ticket = self.get_machine(machine_id)?;
         let machine_doc = self
@@ -106,7 +106,7 @@ impl ManagerProtocol {
             .set_bytes(
                 self.shared_protocol.get_author_id().await?,
                 FEDERATION_INVITE_CODE_KEY.to_bytes(),
-                invite_code.to_string().as_bytes().to_vec(),
+                serde_json::to_vec(machine_config).unwrap(),
             )
             .await?;
         Ok(())

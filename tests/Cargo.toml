@@ -11,5 +11,6 @@ fedimint-tpe = { workspace = true }
 iroh-docs = { workspace = true }
 machine = { workspace = true }
 manager = { workspace = true }
+shared = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

@@ -14,3 +14,4 @@ iroh = { workspace = true }
 iroh-blobs = { workspace = true }
 iroh-docs = { workspace = true }
 iroh-gossip = { workspace = true }
+serde = { workspace = true }
