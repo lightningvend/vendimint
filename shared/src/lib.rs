@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 
 use fedimint_core::{config::FederationId, db::DatabaseValue, invite_code::InviteCode};
 use fedimint_lnv2_common::contracts::IncomingContract;
-use iroh::{Endpoint, protocol::Router};
+use iroh::{
+    Endpoint,
+    endpoint::Connection,
+    protocol::{Router, RouterBuilder},
+};
 use iroh_blobs::{ALPN as BLOBS_ALPN, net_protocol::Blobs};
 use iroh_docs::{ALPN as DOCS_ALPN, AuthorId, protocol::Docs};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, net::Gossip};
@@ -10,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 const INCOMING_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
 pub const FEDERATION_INVITE_CODE_KEY: [u8; 2] = [0x02, 0xFF];
+pub const CLAIM_ALPN: &[u8] = b"machine-claim/0";
+const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct MachineConfig {
@@ -20,14 +26,15 @@ const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
 
 pub struct SharedProtocol {
-    router: Router,
-    blobs: Blobs<iroh_blobs::store::fs::Store>,
-    docs: Docs<iroh_blobs::store::fs::Store>,
-    app_storage_path: PathBuf,
+    pub router_builder: RouterBuilder,
+    pub blobs: Blobs<iroh_blobs::store::fs::Store>,
+    pub docs: Docs<iroh_blobs::store::fs::Store>,
+    pub app_storage_path: PathBuf,
 }
 
 impl SharedProtocol {
-    pub async fn new(storage_path: PathBuf) -> anyhow::Result<Self> {
+    pub async fn new(storage_path: &Path) -> anyhow::Result<Self> {
+        // TODO: Pass in persistent secret key.
         let endpoint = Endpoint::builder()
             .discovery_n0()
             .discovery_local_network()
@@ -52,28 +59,17 @@ impl SharedProtocol {
             .spawn(&blobs, &gossip)
             .await?;
 
-        let router = builder
+        let router_builder = builder
             .accept(BLOBS_ALPN, blobs.clone())
             .accept(GOSSIP_ALPN, gossip.clone())
-            .accept(DOCS_ALPN, docs.clone())
-            .spawn()
-            .await?;
+            .accept(DOCS_ALPN, docs.clone());
 
         Ok(Self {
-            router,
+            router_builder,
             blobs,
             docs,
             app_storage_path,
         })
-    }
-
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.router.shutdown().await
-    }
-
-    #[must_use]
-    pub fn is_shutdown(&self) -> bool {
-        self.router.is_shutdown()
     }
 
     pub async fn get_author_id(&self) -> anyhow::Result<AuthorId> {
@@ -90,16 +86,13 @@ impl SharedProtocol {
         key.append(&mut contract_id_hash_bytes.to_vec());
         key
     }
+}
 
-    pub fn get_blobs(&self) -> &Blobs<iroh_blobs::store::fs::Store> {
-        &self.blobs
-    }
-
-    pub fn get_docs(&self) -> &Docs<iroh_blobs::store::fs::Store> {
-        &self.docs
-    }
-
-    pub fn get_app_storage_path(&self) -> &Path {
-        self.app_storage_path.as_path()
-    }
+/// Derive a numeric claim PIN from exported keying material.
+pub fn claim_pin_from_keying_material(connection: &Connection) -> u32 {
+    let mut km = [0u8; 32];
+    connection
+        .export_keying_material(&mut km, CLAIM_EXPORT_LABEL, b"")
+        .expect("Only fails if output length is too large, which it isn't");
+    u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000
 }
