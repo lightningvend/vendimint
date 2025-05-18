@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 const INCOMING_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
 pub const FEDERATION_INVITE_CODE_KEY: [u8; 2] = [0x02, 0xFF];
+pub const CLAIM_ALPN: &[u8] = b"machine-claim/0";
+pub const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct MachineConfig {
@@ -19,6 +21,7 @@ pub struct MachineConfig {
 const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
 
+#[derive(Clone, Debug)]
 pub struct SharedProtocol {
     router: Router,
     blobs: Blobs<iroh_blobs::store::fs::Store>,
@@ -101,5 +104,33 @@ impl SharedProtocol {
 
     pub fn get_app_storage_path(&self) -> &Path {
         self.app_storage_path.as_path()
+    }
+
+    pub fn endpoint(&self) -> &Endpoint {
+        self.router.endpoint()
+    }
+
+    /// Derive a numeric claim PIN from exported keying material.
+pub fn claim_pin_from_keying_material(km: &[u8]) -> u32 {
+    u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000
+}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SharedProtocol;
+
+    #[test]
+    fn test_claim_pin_deterministic() {
+        let km = [1u8; 32];
+        assert_eq!(
+            SharedProtocol::claim_pin_from_keying_material(&km),
+            SharedProtocol::claim_pin_from_keying_material(&km)
+        );
+        let km2 = [2u8; 32];
+        assert_ne!(
+            SharedProtocol::claim_pin_from_keying_material(&km),
+            SharedProtocol::claim_pin_from_keying_material(&km2)
+        );
     }
 }

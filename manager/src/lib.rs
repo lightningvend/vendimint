@@ -1,10 +1,15 @@
 use std::path::PathBuf;
+use tokio::sync::oneshot;
 
 use fedimint_core::db::DatabaseValue;
+use iroh::NodeAddr;
 use iroh_docs::{Capability, DocTicket};
 use uuid::Uuid;
 
-use shared::{FEDERATION_INVITE_CODE_KEY, MachineConfig, SharedProtocol};
+use shared::{
+    FEDERATION_INVITE_CODE_KEY, MachineConfig, SharedProtocol, CLAIM_ALPN,
+    CLAIM_EXPORT_LABEL,
+};
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
 
@@ -32,6 +37,44 @@ impl ManagerProtocol {
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
         self.shared_protocol.is_shutdown()
+    }
+
+    pub async fn claim_machine(
+        &self,
+        node_addr: NodeAddr,
+    ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
+        let conn = self
+            .shared_protocol
+            .endpoint()
+            .connect(node_addr, CLAIM_ALPN)
+            .await?;
+        let mut km = [0u8; 32];
+        conn.export_keying_material(&mut km, CLAIM_EXPORT_LABEL, b"")
+            .map_err(|e| anyhow::anyhow!(format!("{:?}", e)))?;
+        let pin = SharedProtocol::claim_pin_from_keying_material(&km);
+        let (tx, rx) = oneshot::channel();
+        let docs = self.shared_protocol.get_docs().clone();
+        let path = self.get_machine_doc_ticket_path();
+        tokio::spawn(async move {
+            if rx.await.unwrap_or(false) {
+                if let Ok(mut recv) = conn.accept_uni().await {
+                    if let Ok(bytes) = recv.read_to_end(1024 * 1024).await {
+                        if let Ok(ticket) = serde_json::from_slice::<DocTicket>(&bytes) {
+                            if let Capability::Write(_) = ticket.capability.clone() {
+                                let _ = docs.client().import(ticket.clone()).await;
+                                let id = Uuid::new_v4();
+                                let _ = std::fs::write(
+                                    path.join(id.to_string()),
+                                    serde_json::to_string(&ticket).unwrap(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            conn.close(0u32.into(), b"done");
+        });
+        Ok((pin, tx))
     }
 
     pub async fn add_machine(&self, machine_doc_ticket: DocTicket) -> anyhow::Result<Uuid> {

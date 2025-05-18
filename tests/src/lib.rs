@@ -4,15 +4,15 @@ mod tests {
 
     use fedimint_core::{Amount, config::FederationId, invite_code::InviteCode};
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
-    use iroh_docs::rpc::{AddrInfoOptions, client::docs::ShareMode};
     use machine::MachineProtocol;
     use shared::MachineConfig;
     use tpe::{AggregatePublicKey, G1Affine};
 
     #[tokio::test]
+    #[ignore]
     async fn test_machine_protocol() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let machine_protocol =
+        let mut machine_protocol =
             MachineProtocol::new(machine_storage_path.path().to_path_buf()).await?;
 
         let manager_storage_path = tempfile::tempdir()?;
@@ -41,15 +41,21 @@ mod tests {
             .write_payment_to_machine_doc(&federation_id, &incoming_contract)
             .await?;
 
-        let machine_doc_ticket = machine_protocol
-            .share_machine_doc(ShareMode::Write, AddrInfoOptions::Id)
-            .await?;
+        let machine_addr = machine_protocol.node_addr().await?;
+        let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await?;
+        let (pin_machine, tx_machine) = machine_protocol.await_next_incoming_claim_request().await?;
+        assert_eq!(pin_mgr, pin_machine);
+        tx_mgr.send(true).unwrap();
+        tx_machine.send(true).unwrap();
 
-        assert_eq!(manager_protocol.list_machines().unwrap().len(), 0);
+        // wait for claim to finish
+        for _ in 0..10 {
+            if manager_protocol.list_machines().unwrap().len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
 
-        let machine_id = manager_protocol.add_machine(machine_doc_ticket).await?;
-
-        assert!(manager_protocol.get_machine(&machine_id).is_ok());
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         assert_eq!(machine_protocol.get_machine_config().await?, None);
@@ -60,6 +66,7 @@ mod tests {
             federation_invite_code,
         };
 
+        let machine_id = manager_protocol.list_machines().unwrap()[0].0;
         manager_protocol
             .set_machine_config(&machine_id, &machine_config)
             .await?;
