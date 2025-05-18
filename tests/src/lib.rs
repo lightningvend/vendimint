@@ -4,20 +4,18 @@ mod tests {
 
     use fedimint_core::{Amount, config::FederationId, invite_code::InviteCode};
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
-    use iroh_docs::rpc::{AddrInfoOptions, client::docs::ShareMode};
     use machine::MachineProtocol;
     use shared::MachineConfig;
     use tpe::{AggregatePublicKey, G1Affine};
 
+    // TODO: Cleanup this test, and also test the protocols more thoroughly.
     #[tokio::test]
-    async fn test_machine_protocol() -> anyhow::Result<()> {
+    async fn test_protocols() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let machine_protocol =
-            MachineProtocol::new(machine_storage_path.path().to_path_buf()).await?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager_storage_path = tempfile::tempdir()?;
-        let manager_protocol =
-            manager::ManagerProtocol::new(manager_storage_path.path().to_path_buf()).await?;
+        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
 
         let pk = fedimint_core::secp256k1::PublicKey::from_str(
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
@@ -37,19 +35,36 @@ mod tests {
             pk,
         );
 
-        machine_protocol
-            .write_payment_to_machine_doc(&federation_id, &incoming_contract)
-            .await?;
+        // machine_protocol
+        //     .write_payment_to_machine_doc(&federation_id, &incoming_contract)
+        //     .await?;
 
-        let machine_doc_ticket = machine_protocol
-            .share_machine_doc(ShareMode::Write, AddrInfoOptions::Id)
-            .await?;
+        let machine_addr = machine_protocol.node_addr().await?;
+        let manager_task = tokio::spawn(async move {
+            let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
+            tx_mgr.send(true).unwrap();
+            (pin_mgr, manager_protocol)
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin_machine, tx_machine) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx_machine.send(true).unwrap();
+            (pin_machine, machine_protocol)
+        });
+        let ((pin_mgr, manager_protocol), (pin_machine, machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        assert_eq!(pin_mgr, pin_machine);
 
-        assert_eq!(manager_protocol.list_machines().unwrap().len(), 0);
+        // wait for claim to finish
+        for _ in 0..10 {
+            if manager_protocol.list_machines().unwrap().len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
 
-        let machine_id = manager_protocol.add_machine(machine_doc_ticket).await?;
-
-        assert!(manager_protocol.get_machine(&machine_id).is_ok());
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         assert_eq!(machine_protocol.get_machine_config().await?, None);
@@ -60,6 +75,7 @@ mod tests {
             federation_invite_code,
         };
 
+        let machine_id = manager_protocol.list_machines().unwrap()[0].0;
         manager_protocol
             .set_machine_config(&machine_id, &machine_config)
             .await?;
