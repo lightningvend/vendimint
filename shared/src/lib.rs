@@ -3,14 +3,16 @@ use std::path::{Path, PathBuf};
 use fedimint_core::{config::FederationId, db::DatabaseValue, invite_code::InviteCode};
 use fedimint_lnv2_common::contracts::IncomingContract;
 use iroh::{
-    Endpoint,
+    Endpoint, SecretKey,
     endpoint::Connection,
     protocol::{Router, RouterBuilder},
 };
 use iroh_blobs::{ALPN as BLOBS_ALPN, net_protocol::Blobs};
 use iroh_docs::{ALPN as DOCS_ALPN, AuthorId, protocol::Docs};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, net::Gossip};
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 const INCOMING_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
 pub const FEDERATION_INVITE_CODE_KEY: [u8; 2] = [0x02, 0xFF];
@@ -24,6 +26,7 @@ pub struct MachineConfig {
 
 const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
+const SECRET_KEY_FILE: &str = "secret.key";
 
 pub struct SharedProtocol {
     pub router_builder: RouterBuilder,
@@ -34,8 +37,18 @@ pub struct SharedProtocol {
 
 impl SharedProtocol {
     pub async fn new(storage_path: &Path) -> anyhow::Result<Self> {
-        // TODO: Pass in persistent secret key.
+        let secret_key_path = storage_path.join(SECRET_KEY_FILE);
+        let secret_key = match std::fs::read_to_string(&secret_key_path) {
+            Ok(key_str) => SecretKey::from_str(key_str.trim())?,
+            Err(_) => {
+                let key = SecretKey::generate(OsRng);
+                std::fs::write(&secret_key_path, key.to_string())?;
+                key
+            }
+        };
+
         let endpoint = Endpoint::builder()
+            .secret_key(secret_key)
             .discovery_n0()
             .discovery_local_network()
             .bind()

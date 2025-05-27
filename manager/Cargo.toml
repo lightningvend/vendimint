@@ -12,7 +12,8 @@ fedimint-core = { workspace = true }
 iroh = { workspace = true }
 iroh-blobs = { workspace = true }
 iroh-docs = { workspace = true }
-uuid = { workspace = true }
 serde_json = { workspace = true }
 shared = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
+
