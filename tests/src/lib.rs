@@ -99,4 +99,182 @@ mod tests {
 
         Ok(())
     }
+
+    // Ensure that a machine can only be claimed by a single manager. A subsequent
+    // claim attempt from another manager should fail and no claim request should
+    // be produced by the machine.
+    #[tokio::test]
+    async fn test_machine_can_only_be_claimed_once() -> anyhow::Result<()> {
+        let machine_storage_path = tempfile::tempdir()?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+
+        let manager1_storage_path = tempfile::tempdir()?;
+        let manager1_protocol =
+            manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
+
+        let manager2_storage_path = tempfile::tempdir()?;
+        let manager2_protocol =
+            manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
+
+        let machine_addr = machine_protocol.node_addr().await?;
+
+        // First claim succeeds
+        let manager_task = tokio::spawn({
+            let machine_addr = machine_addr.clone();
+            async move {
+                let (pin_mgr, tx_mgr) = manager1_protocol
+                    .claim_machine(machine_addr)
+                    .await
+                    .unwrap();
+                tx_mgr.send(true).unwrap();
+                (pin_mgr, manager1_protocol)
+            }
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin_machine, tx_machine) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx_machine.send(true).unwrap();
+            (pin_machine, machine_protocol)
+        });
+        let ((pin_mgr, manager1_protocol), (pin_machine, machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        assert_eq!(pin_mgr, pin_machine);
+
+        for _ in 0..10 {
+            if manager1_protocol.list_machines().unwrap().len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(manager1_protocol.list_machines()?.len(), 1);
+
+        // Second manager attempts to claim
+        let machine_addr2 = machine_protocol.node_addr().await?;
+        let (_pin_mgr2, tx_mgr2) = manager2_protocol.claim_machine(machine_addr2).await?;
+        tx_mgr2.send(true).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert_eq!(manager2_protocol.list_machines()?.len(), 0);
+
+        Ok(())
+    }
+
+    // If the machine rejects a claim by sending `false`, no machine should be
+    // stored by the manager and the machine should remain unclaimed.
+    #[tokio::test]
+    async fn test_claim_rejected_by_machine() -> anyhow::Result<()> {
+        let machine_storage_path = tempfile::tempdir()?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+
+        let manager_storage_path = tempfile::tempdir()?;
+        let manager_protocol =
+            manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+
+        let machine_addr = machine_protocol.node_addr().await?;
+
+        let manager_task = tokio::spawn(async move {
+            let (pin_mgr, tx_mgr) = manager_protocol
+                .claim_machine(machine_addr)
+                .await
+                .unwrap();
+            tx_mgr.send(true).unwrap();
+            (pin_mgr, manager_protocol)
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin_machine, tx_machine) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx_machine.send(false).unwrap();
+            (pin_machine, machine_protocol)
+        });
+        let ((pin_mgr, manager_protocol), (_pin_machine, mut machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        let _ = pin_mgr;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(manager_protocol.list_machines()?.len(), 0);
+
+        // After rejection, another claim should be possible
+        let machine_addr = machine_protocol.node_addr().await?;
+        let manager_task = tokio::spawn(async move {
+            let (pin_mgr, tx_mgr) = manager_protocol
+                .claim_machine(machine_addr)
+                .await
+                .unwrap();
+            tx_mgr.send(true).unwrap();
+            (pin_mgr, manager_protocol)
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin_machine, tx_machine) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx_machine.send(true).unwrap();
+            (pin_machine, machine_protocol)
+        });
+        let ((pin_mgr, _manager_protocol), (pin_machine, _machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        assert_eq!(pin_mgr, pin_machine);
+
+        Ok(())
+    }
+
+    // If the manager decides not to claim the machine (sends `false`), the
+    // machine will still consider itself claimed by that manager, preventing
+    // subsequent claims by others.
+    #[tokio::test]
+    async fn test_claim_rejected_by_manager() -> anyhow::Result<()> {
+        let machine_storage_path = tempfile::tempdir()?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+
+        let manager1_storage_path = tempfile::tempdir()?;
+        let manager1_protocol =
+            manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
+
+        let manager2_storage_path = tempfile::tempdir()?;
+        let manager2_protocol =
+            manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
+
+        let machine_addr = machine_protocol.node_addr().await?;
+
+        let manager_task = tokio::spawn({
+            let machine_addr = machine_addr.clone();
+            async move {
+                let (pin_mgr, tx_mgr) = manager1_protocol
+                    .claim_machine(machine_addr)
+                    .await
+                    .unwrap();
+                tx_mgr.send(false).unwrap();
+                (pin_mgr, manager1_protocol)
+            }
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin_machine, tx_machine) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx_machine.send(true).unwrap();
+            (pin_machine, machine_protocol)
+        });
+        let ((_pin_mgr, _manager1_protocol), (_pin_machine, machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Second manager should not be able to claim now
+        let machine_addr = machine_protocol.node_addr().await?;
+        let (_pin2, tx2) = manager2_protocol.claim_machine(machine_addr).await?;
+        tx2.send(true).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert_eq!(manager2_protocol.list_machines()?.len(), 0);
+
+        Ok(())
+    }
 }
