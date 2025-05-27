@@ -4913,6 +4913,7 @@ dependencies = [
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
+ "rand 0.8.5",
  "serde",
 ]
 

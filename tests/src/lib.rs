@@ -277,4 +277,51 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_machine_restart_persistence() -> anyhow::Result<()> {
+        let machine_storage_path = tempfile::tempdir()?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+
+        let manager_storage_path = tempfile::tempdir()?;
+        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+
+        let addr_before = machine_protocol.node_addr().await?;
+        let addr_for_mgr = addr_before.clone();
+        let manager_task = tokio::spawn(async move {
+            let (pin, tx) = manager_protocol.claim_machine(addr_for_mgr).await.unwrap();
+            tx.send(true).unwrap();
+            (pin, manager_protocol)
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin, tx) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx.send(true).unwrap();
+            (pin, machine_protocol)
+        });
+        let ((pin_mgr, manager_protocol), (pin_machine, machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        assert_eq!(pin_mgr, pin_machine);
+
+        for _ in 0..10 {
+            if manager_protocol.list_machines().unwrap().len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
+
+        machine_protocol.shutdown().await?;
+        drop(machine_protocol);
+
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+        let addr_after = machine_protocol.node_addr().await?;
+
+        assert_eq!(addr_before.node_id, addr_after.node_id);
+
+        Ok(())
+    }
 }
