@@ -1,9 +1,13 @@
 use std::path::{Path, PathBuf};
 use tokio::sync::oneshot;
 
-use fedimint_core::db::DatabaseValue;
+use fedimint_core::{config::FederationId, db::DatabaseValue};
+use fedimint_core::bitcoin::hashes::Hash as BitcoinHash;
+use fedimint_lnv2_common::{contracts::IncomingContract, ContractId};
+use fedimint_core::bitcoin::hashes::sha256;
 use iroh::{NodeAddr, protocol::Router};
-use iroh_docs::{Capability, DocTicket, protocol::Docs};
+use iroh_blobs::net_protocol::Blobs;
+use iroh_docs::{Capability, DocTicket, protocol::Docs, store::Query};
 use uuid::Uuid;
 
 use shared::{
@@ -15,6 +19,7 @@ const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
 
 pub struct ManagerProtocol {
     router: Router,
+    blobs: Blobs<iroh_blobs::store::fs::Store>,
     docs: Docs<iroh_blobs::store::fs::Store>,
     app_storage_path: PathBuf,
 }
@@ -25,6 +30,7 @@ impl ManagerProtocol {
 
         let manager_protocol = Self {
             router: shared_protocol.router_builder.spawn(),
+            blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
         };
@@ -130,6 +136,87 @@ impl ManagerProtocol {
                 serde_json::to_vec(machine_config).unwrap(),
             )
             .await?;
+        Ok(())
+    }
+
+    pub async fn list_claimable_payments_for_machine(
+        &self,
+        node_addr: NodeAddr,
+    ) -> anyhow::Result<Vec<(FederationId, IncomingContract)>> {
+        let mut payments = Vec::new();
+
+        for (_id, ticket) in self.list_machines()? {
+            let doc = self
+                .docs
+                .client()
+                .open(ticket.capability.id())
+                .await?
+                .unwrap();
+            let _ = doc.start_sync(vec![node_addr.clone()]).await;
+
+            const PREFIX: [u8; 2] = [0x01, 0xFF];
+            let query = Query::single_latest_per_key().key_prefix(PREFIX).build();
+            let mut stream = doc.get_many(query).await?;
+
+            use futures_lite::StreamExt;
+            while let Some(entry) = stream.next().await {
+                let entry = entry?;
+                let key = entry.key();
+                if key.len() != 66 || key[0..2] != PREFIX {
+                    continue;
+                }
+
+                let mut fid_bytes = [0u8; 32];
+                fid_bytes.copy_from_slice(&key[2..34]);
+                let mut cid_bytes = [0u8; 32];
+                cid_bytes.copy_from_slice(&key[34..66]);
+
+                let bytes = match self
+                    .blobs
+                    .client()
+                    .read_to_bytes(entry.content_hash())
+                    .await
+                {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let (incoming_contract, _) = bincode::serde::decode_from_slice(
+                    &bytes,
+                    bincode::config::standard(),
+                )?;
+
+                payments.push((
+                    FederationId(sha256::Hash::from_byte_array(fid_bytes)),
+                    incoming_contract,
+                ));
+            }
+        }
+
+        Ok(payments)
+    }
+
+    pub async fn remove_claimed_payment(
+        &self,
+        federation_id: FederationId,
+        contract_id: ContractId,
+    ) -> anyhow::Result<()> {
+        const PREFIX: [u8; 2] = [0x01, 0xFF];
+        let mut key = PREFIX.to_vec();
+        key.extend_from_slice(federation_id.0.as_byte_array());
+        key.extend_from_slice(contract_id.0.as_ref());
+
+        for (_id, ticket) in self.list_machines()? {
+            let doc = self
+                .docs
+                .client()
+                .open(ticket.capability.id())
+                .await?
+                .unwrap();
+            let _ = doc
+                .del(self.docs.client().authors().default().await?, key.clone())
+                .await?;
+        }
+
         Ok(())
     }
 

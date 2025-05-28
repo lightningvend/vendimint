@@ -21,9 +21,9 @@ mod tests {
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
         )?;
 
-        let federation_id = FederationId::dummy();
+        let _federation_id = FederationId::dummy();
 
-        let incoming_contract = IncomingContract::new(
+        let _incoming_contract = IncomingContract::new(
             AggregatePublicKey(G1Affine::identity()),
             [127; 32],
             [255; 32],
@@ -321,6 +321,195 @@ mod tests {
         let addr_after = machine_protocol.node_addr().await?;
 
         assert_eq!(addr_before.node_id, addr_after.node_id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_payment_flow() -> anyhow::Result<()> {
+        use fedimint_lnv2_common::contracts::PaymentImage;
+        use fedimint_core::secp256k1::PublicKey;
+
+        let machine_storage_path = tempfile::tempdir()?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+
+        let manager_storage_path = tempfile::tempdir()?;
+        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+
+        let machine_addr = machine_protocol.node_addr().await?;
+        let manager_task = tokio::spawn({
+            let machine_addr = machine_addr.clone();
+            async move {
+                let (pin, tx) = manager_protocol.claim_machine(machine_addr).await.unwrap();
+                tx.send(true).unwrap();
+                (pin, manager_protocol)
+            }
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin, tx) = machine_protocol.await_next_incoming_claim_request().await.unwrap();
+            tx.send(true).unwrap();
+            (pin, machine_protocol)
+        });
+        let ((pin_mgr, mut manager_protocol), (pin_machine, mut machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        assert_eq!(pin_mgr, pin_machine);
+
+        for _ in 0..10 {
+            if manager_protocol.list_machines().unwrap().len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let pk = PublicKey::from_str(
+            "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
+        )?;
+        let federation_id = FederationId::dummy();
+        let incoming_contract = IncomingContract::new(
+            AggregatePublicKey(G1Affine::identity()),
+            [1; 32],
+            [2; 32],
+            PaymentImage::Point(pk),
+            Amount { msats: 5000 },
+            10,
+            pk,
+            pk,
+            pk,
+        );
+
+        machine_protocol
+            .write_payment_to_machine_doc(&federation_id, &incoming_contract)
+            .await?;
+
+        for _ in 0..20 {
+            let payments = manager_protocol
+                .list_claimable_payments_for_machine(machine_addr.clone())
+                .await?;
+            if !payments.is_empty() {
+                assert_eq!(payments, vec![(federation_id, incoming_contract.clone())]);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let payments = manager_protocol
+            .list_claimable_payments_for_machine(machine_addr.clone())
+            .await?;
+        assert_eq!(payments, vec![(federation_id, incoming_contract.clone())]);
+
+        manager_protocol
+            .remove_claimed_payment(federation_id, incoming_contract.contract_id())
+            .await?;
+        manager_protocol
+            .remove_claimed_payment(federation_id, incoming_contract.contract_id())
+            .await?;
+
+        for _ in 0..20 {
+            if manager_protocol
+                .list_claimable_payments_for_machine(machine_addr.clone())
+                .await?
+                .is_empty()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        assert!(manager_protocol
+            .list_claimable_payments_for_machine(machine_addr.clone())
+            .await?
+            .is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_offline_payment_and_deletion() -> anyhow::Result<()> {
+        use fedimint_lnv2_common::contracts::PaymentImage;
+        use fedimint_core::secp256k1::PublicKey;
+
+        let machine_storage = tempfile::tempdir()?;
+        let mut machine_protocol = MachineProtocol::new(machine_storage.path()).await?;
+
+        let manager_storage = tempfile::tempdir()?;
+        let mut manager_protocol = manager::ManagerProtocol::new(manager_storage.path()).await?;
+
+        let machine_addr = machine_protocol.node_addr().await?;
+        let manager_task = tokio::spawn(async move {
+            let (pin, tx) = manager_protocol.claim_machine(machine_addr).await.unwrap();
+            tx.send(true).unwrap();
+            (pin, manager_protocol)
+        });
+        let machine_task = tokio::spawn(async move {
+            let (pin, tx) = machine_protocol.await_next_incoming_claim_request().await.unwrap();
+            tx.send(true).unwrap();
+            (pin, machine_protocol)
+        });
+        let ((pin_mgr, mut manager_protocol), (pin_machine, mut machine_protocol)) =
+            tokio::try_join!(manager_task, machine_task)?;
+        assert_eq!(pin_mgr, pin_machine);
+
+        let pk = PublicKey::from_str(
+            "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
+        )?;
+        let federation_id = FederationId::dummy();
+        let incoming_contract = IncomingContract::new(
+            AggregatePublicKey(G1Affine::identity()),
+            [3; 32],
+            [4; 32],
+            PaymentImage::Point(pk),
+            Amount { msats: 6000 },
+            20,
+            pk,
+            pk,
+            pk,
+        );
+
+        drop(manager_protocol);
+
+        machine_protocol
+            .write_payment_to_machine_doc(&federation_id, &incoming_contract)
+            .await?;
+
+        let machine_addr_again = machine_protocol.node_addr().await?;
+
+        let mut manager_protocol = manager::ManagerProtocol::new(manager_storage.path()).await?;
+
+        for _ in 0..20 {
+            let payments = manager_protocol
+                .list_claimable_payments_for_machine(machine_addr_again.clone())
+                .await?;
+            if payments.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        machine_protocol.shutdown().await?;
+        drop(machine_protocol);
+
+        manager_protocol
+            .remove_claimed_payment(federation_id, incoming_contract.contract_id())
+            .await?;
+
+        let mut machine_protocol = MachineProtocol::new(machine_storage.path()).await?;
+        let new_addr = machine_protocol.node_addr().await?;
+
+        for _ in 0..20 {
+            if manager_protocol
+                .list_claimable_payments_for_machine(new_addr.clone())
+                .await?
+                .is_empty()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        assert!(manager_protocol
+            .list_claimable_payments_for_machine(new_addr.clone())
+            .await?
+            .is_empty());
 
         Ok(())
     }

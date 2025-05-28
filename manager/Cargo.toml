@@ -16,4 +16,7 @@ serde_json = { workspace = true }
 shared = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
+fedimint-lnv2-common = { workspace = true }
+bincode = { workspace = true }
+futures-lite = "2"
 
