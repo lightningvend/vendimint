@@ -38,13 +38,12 @@ pub struct SharedProtocol {
 impl SharedProtocol {
     pub async fn new(storage_path: &Path) -> anyhow::Result<Self> {
         let secret_key_path = storage_path.join(SECRET_KEY_FILE);
-        let secret_key = match std::fs::read_to_string(&secret_key_path) {
-            Ok(key_str) => SecretKey::from_str(key_str.trim())?,
-            Err(_) => {
-                let key = SecretKey::generate(OsRng);
-                std::fs::write(&secret_key_path, key.to_string())?;
-                key
-            }
+        let secret_key = if let Ok(key_str) = std::fs::read_to_string(&secret_key_path) {
+            SecretKey::from_str(key_str.trim())?
+        } else {
+            let key = SecretKey::generate(OsRng);
+            std::fs::write(&secret_key_path, key.to_string())?;
+            key
         };
 
         let endpoint = Endpoint::builder()

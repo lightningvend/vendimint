@@ -21,9 +21,9 @@ mod tests {
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
         )?;
 
-        let federation_id = FederationId::dummy();
+        let _federation_id = FederationId::dummy();
 
-        let incoming_contract = IncomingContract::new(
+        let _incoming_contract = IncomingContract::new(
             AggregatePublicKey(G1Affine::identity()),
             [127; 32],
             [255; 32],
@@ -109,12 +109,10 @@ mod tests {
         let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager1_storage_path = tempfile::tempdir()?;
-        let manager1_protocol =
-            manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
+        let manager1_protocol = manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
 
         let manager2_storage_path = tempfile::tempdir()?;
-        let manager2_protocol =
-            manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
+        let manager2_protocol = manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
 
@@ -122,10 +120,8 @@ mod tests {
         let manager_task = tokio::spawn({
             let machine_addr = machine_addr.clone();
             async move {
-                let (pin_mgr, tx_mgr) = manager1_protocol
-                    .claim_machine(machine_addr)
-                    .await
-                    .unwrap();
+                let (pin_mgr, tx_mgr) =
+                    manager1_protocol.claim_machine(machine_addr).await.unwrap();
                 tx_mgr.send(true).unwrap();
                 (pin_mgr, manager1_protocol)
             }
@@ -170,16 +166,12 @@ mod tests {
         let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager_storage_path = tempfile::tempdir()?;
-        let manager_protocol =
-            manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
 
         let manager_task = tokio::spawn(async move {
-            let (pin_mgr, tx_mgr) = manager_protocol
-                .claim_machine(machine_addr)
-                .await
-                .unwrap();
+            let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
             tx_mgr.send(true).unwrap();
             (pin_mgr, manager_protocol)
         });
@@ -202,10 +194,7 @@ mod tests {
         // After rejection, another claim should be possible
         let machine_addr = machine_protocol.node_addr().await?;
         let manager_task = tokio::spawn(async move {
-            let (pin_mgr, tx_mgr) = manager_protocol
-                .claim_machine(machine_addr)
-                .await
-                .unwrap();
+            let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
             tx_mgr.send(true).unwrap();
             (pin_mgr, manager_protocol)
         });
@@ -233,22 +222,18 @@ mod tests {
         let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager1_storage_path = tempfile::tempdir()?;
-        let manager1_protocol =
-            manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
+        let manager1_protocol = manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
 
         let manager2_storage_path = tempfile::tempdir()?;
-        let manager2_protocol =
-            manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
+        let manager2_protocol = manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
 
         let manager_task = tokio::spawn({
             let machine_addr = machine_addr.clone();
             async move {
-                let (pin_mgr, tx_mgr) = manager1_protocol
-                    .claim_machine(machine_addr)
-                    .await
-                    .unwrap();
+                let (pin_mgr, tx_mgr) =
+                    manager1_protocol.claim_machine(machine_addr).await.unwrap();
                 tx_mgr.send(false).unwrap();
                 (pin_mgr, manager1_protocol)
             }
