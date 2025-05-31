@@ -1,0 +1,22 @@
+[package]
+name = "fedimint-cli"
+publish = false
+authors = { workspace = true }
+edition = { workspace = true }
+version = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "fedimint-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+fedimint-cli = { workspace = true }
+fedimint-core = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+fedimint-build = { git = "https://github.com/fedimint/fedimint" }

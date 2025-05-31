@@ -1,0 +1,24 @@
+[package]
+name = "vendimint-tests"
+publish = false
+authors = { workspace = true }
+edition = { workspace = true }
+version = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "protocol-tests"
+path = "bin/tests.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+bitcoin = { workspace = true }
+devimint = { workspace = true }
+fedimint-core = { workspace = true }
+fedimint-lnv2-common = { workspace = true }
+fedimint-lnv2-remote-client = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+vendimint = { workspace = true }

@@ -1,13 +1,23 @@
+use fedimint_core::{config::FederationId, db::DatabaseValue};
+use fedimint_lnv2_remote_client::ClaimableContract;
+use futures_util::StreamExt;
+
+use iroh::{
+    NodeAddr,
+    protocol::{ProtocolHandler, Router},
+};
+use iroh_blobs::net_protocol::Blobs;
+use iroh_docs::{
+    Capability, DocTicket,
+    protocol::Docs,
+    store::{QueryBuilder, SingleLatestPerKeyQuery},
+};
 use std::path::{Path, PathBuf};
 use tokio::sync::oneshot;
-
-use fedimint_core::db::DatabaseValue;
-use iroh::{NodeAddr, protocol::Router};
-use iroh_docs::{Capability, DocTicket, protocol::Docs};
 use uuid::Uuid;
 
-use shared::{
-    CLAIM_ALPN, FEDERATION_INVITE_CODE_KEY, MachineConfig, SharedProtocol,
+use super::shared::{
+    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol,
     claim_pin_from_keying_material,
 };
 
@@ -15,6 +25,7 @@ const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
 
 pub struct ManagerProtocol {
     router: Router,
+    blobs: Blobs<iroh_blobs::store::fs::Store>,
     docs: Docs<iroh_blobs::store::fs::Store>,
     app_storage_path: PathBuf,
 }
@@ -24,7 +35,8 @@ impl ManagerProtocol {
         let shared_protocol = SharedProtocol::new(storage_path).await?;
 
         let manager_protocol = Self {
-            router: shared_protocol.router_builder.spawn(),
+            router: shared_protocol.router_builder.spawn().await?,
+            blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
         };
@@ -37,7 +49,10 @@ impl ManagerProtocol {
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.router.shutdown().await
+        self.router.shutdown().await?;
+        self.blobs.shutdown().await;
+        self.docs.shutdown().await;
+        Ok(())
     }
 
     #[must_use]
@@ -111,6 +126,37 @@ impl ManagerProtocol {
         Ok(machines)
     }
 
+    pub async fn get_machine_config(
+        &self,
+        machine_id: &Uuid,
+    ) -> anyhow::Result<Option<MachineConfig>> {
+        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc = self
+            .docs
+            .client()
+            .open(machine_doc_ticket.capability.id())
+            .await?
+            .unwrap();
+
+        let Some(entry) = machine_doc
+            .get_one(
+                QueryBuilder::<SingleLatestPerKeyQuery>::default()
+                    .key_exact(MACHINE_CONFIG_KEY.to_bytes()),
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let bytes = self
+            .blobs
+            .client()
+            .read_to_bytes(entry.content_hash())
+            .await?;
+
+        Ok(Some(serde_json::from_slice(&bytes)?))
+    }
+
     pub async fn set_machine_config(
         &self,
         machine_id: &Uuid,
@@ -126,10 +172,86 @@ impl ManagerProtocol {
         machine_doc
             .set_bytes(
                 self.docs.client().authors().default().await?,
-                FEDERATION_INVITE_CODE_KEY.to_bytes(),
+                MACHINE_CONFIG_KEY.to_bytes(),
                 serde_json::to_vec(machine_config).unwrap(),
             )
             .await?;
+        Ok(())
+    }
+
+    pub async fn get_claimable_contracts(
+        &self,
+    ) -> anyhow::Result<Vec<(Uuid, FederationId, ClaimableContract)>> {
+        let mut payments = Vec::new();
+
+        for (machine_id, machine_doc_ticket) in self.list_machines()? {
+            let machine_doc = self
+                .docs
+                .client()
+                .open(machine_doc_ticket.capability.id())
+                .await?
+                .unwrap();
+
+            let mut contract_stream = machine_doc
+                .get_many(
+                    // Note: Queries exclude empty values by default.
+                    QueryBuilder::<SingleLatestPerKeyQuery>::default()
+                        .key_prefix(CLAIMABLE_CONTRACT_PREFIX)
+                        .build(),
+                )
+                .await?;
+
+            while let Some(entry_or) = contract_stream.next().await {
+                let Ok(entry) = entry_or else {
+                    continue;
+                };
+
+                let Ok((federation_id, _contract_id)) =
+                    SharedProtocol::parse_incoming_contract_machine_doc_key(entry.key())
+                else {
+                    continue;
+                };
+
+                let bytes = self
+                    .blobs
+                    .client()
+                    .read_to_bytes(entry.content_hash())
+                    .await?;
+
+                let claimable_contract: ClaimableContract = serde_json::from_slice(&bytes)?;
+
+                payments.push((machine_id, federation_id, claimable_contract));
+            }
+        }
+
+        Ok(payments)
+    }
+
+    pub async fn remove_claimable_contracts(
+        &self,
+        // TODO: Change to a `HashMap<Uuid, (FederationId, ClaimableContract)>`
+        // so we don't have to re-fetch the machine doc for every contract.
+        claimable_contracts: Vec<(Uuid, FederationId, ClaimableContract)>,
+    ) -> anyhow::Result<()> {
+        let author_id = self.docs.client().authors().default().await?;
+
+        for (machine_id, federation_id, claimable_contract) in claimable_contracts {
+            let machine_doc_ticket = self.get_machine(&machine_id)?;
+            let machine_doc = self
+                .docs
+                .client()
+                .open(machine_doc_ticket.capability.id())
+                .await?
+                .unwrap();
+
+            let key = SharedProtocol::create_claimable_contract_machine_doc_key(
+                &federation_id,
+                &claimable_contract,
+            );
+
+            machine_doc.set_bytes(author_id, key, vec![]).await?;
+        }
+
         Ok(())
     }
 

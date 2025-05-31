@@ -13,6 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Apt Get Update
+        run: sudo apt-get update
+      - name: Install Protobuf Compiler
+        run: sudo apt-get install -y protobuf-compiler
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
