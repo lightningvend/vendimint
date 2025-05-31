@@ -1,39 +1,89 @@
 [workspace]
-members = [
-    "machine",
-    "manager",
-    "shared",
-    "tests"
-]
+members = ["fedimintd", "fedimint-cli", "vendimint", "vendimint-tests"]
 resolver = "3"
+
+[workspace.package]
+authors = ["tvolk131"]
+edition = "2024"
+version = "0.0.1"
 
 [workspace.lints.clippy]
 nursery = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
-missing_const_for_fn = "allow"
+large_futures = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 option_if_let_else = "allow"
+significant_drop_tightening = "allow"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
 bincode = { version = "2.0.1", features = ["serde"] }
-fedimint-core = "0.7.1"
-fedimint-lnv2-common = "0.7.1"
-fedimint-tpe = "0.7.1"
-iroh = { version = "0.35.0", features = ["discovery-local-network"] }
-iroh-blobs = "0.35.0"
-iroh-docs = { version = "0.35.0", features = ["rpc"] }
-iroh-gossip = "0.35.0"
-machine = { path = "./machine" }
-manager = { path = "./manager" }
+bip39 = "2.1.0"
+bitcoin = "0.32.6"
+dashmap = "6.1.0"
+devimint = "0.7.2"
+fedimintd = "0.7.2"
+fedimint-api-client = { version = "0.7.2", features = ["tor"] }
+fedimint-bip39 = "0.7.2"
+fedimint-cli = "0.7.2"
+fedimint-client = "0.7.2"
+fedimint-core = "0.7.2"
+fedimint-derive-secret = "0.7.2"
+fedimint-lnv2-common = "0.7.2"
+fedimint-lnv2-remote-client = "0.0.4"
+fedimint-mint-client = "0.7.2"
+fedimint-rocksdb = "0.7.2"
+fedimint-tpe = "0.7.2"
+futures-util = "0.3.31"
+iroh = { version = "0.34.1", features = ["discovery-local-network"] }
+iroh-blobs = "0.34.1"
+iroh-docs = { version = "0.34.0", features = ["rpc"] }
+iroh-gossip = "0.34.1"
+lightning-invoice = "0.32.0"
 n0-future = "0.1.3"
-quic-rpc = "0.20.0"
+quic-rpc = "0.19.0"
 rand = "0.8.5"
 serde = "1.0.219"
 serde_json = "1.0.140"
-shared = { path = "./shared" }
+sha2 = "0.10"
 tempfile = "3.20.0"
 tokio = { version = "1.45.0", features = ["macros", "rt"] }
+tokio-stream = "0.1.17"
 uuid = { version = "1.16.0", features = ["v4"] }
+vendimint = { path = "./vendimint" }
+
+# TODO: Figure out what this does and if it's needed.
+# It's a copy/paste from roastr.
+[profile.dev]
+split-debuginfo = "packed"
+
+# In dev mode, optimize perf-critical crates (mainly cryptography crates).
+# This prevents fedimint from being really slow.
+[profile.dev.package]
+bitcoin_hashes = { opt-level = 3 }
+bls12_381 = { opt-level = 3 }
+byteorder = { opt-level = 3 }
+ff = { opt-level = 3 }
+group = { opt-level = 3 }
+pairing = { opt-level = 3 }
+rand_core = { opt-level = 3 }
+ring = { opt-level = 3 }
+secp256k1 = { opt-level = 3 }
+secp256k1-sys = { opt-level = 3 }
+subtle = { opt-level = 3 }
+tikv-jemalloc-sys = { opt-level = 3 }
+zeroize = { opt-level = 3 }
+
+# TODO: Figure out what this does and if it's needed.
+# It's a copy/paste from roastr.
+[profile.ci]
+inherits = "dev"
+debug = "line-tables-only"
+incremental = false
+
+# TODO: Figure out what this does and if it's needed.
+# It's a copy/paste from roastr.
+[profile.release]
+debug = "line-tables-only"

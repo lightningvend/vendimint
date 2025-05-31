@@ -1,21 +1,29 @@
+mod machine;
+mod manager;
+mod shared;
+
+pub use machine::MachineProtocol;
+pub use manager::ManagerProtocol;
+pub use shared::MachineConfig;
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::{str::FromStr, time::Duration};
 
     use fedimint_core::{Amount, config::FederationId, invite_code::InviteCode};
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
-    use machine::MachineProtocol;
-    use shared::MachineConfig;
     use tpe::{AggregatePublicKey, G1Affine};
 
     // TODO: Cleanup this test, and also test the protocols more thoroughly.
     #[tokio::test]
     async fn test_protocols() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager_storage_path = tempfile::tempdir()?;
-        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+        let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
         let pk = fedimint_core::secp256k1::PublicKey::from_str(
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
@@ -57,7 +65,7 @@ mod tests {
             tokio::try_join!(manager_task, machine_task)?;
         assert_eq!(pin_mgr, pin_machine);
 
-        // wait for claim to finish
+        // Wait for claim to finish.
         for _ in 0..10 {
             if manager_protocol.list_machines().unwrap().len() == 1 {
                 break;
@@ -73,6 +81,7 @@ mod tests {
 
         let machine_config = MachineConfig {
             federation_invite_code,
+            claimer_pk: pk,
         };
 
         let machine_id = manager_protocol.list_machines().unwrap()[0].0;
@@ -87,9 +96,10 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            if i == 9 {
-                panic!("Timeout waiting for federation invite code to be set");
-            }
+            assert!(
+                i != 9,
+                "Timeout waiting for federation invite code to be set"
+            );
         }
 
         assert_eq!(
@@ -106,13 +116,13 @@ mod tests {
     #[tokio::test]
     async fn test_machine_can_only_be_claimed_once() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager1_storage_path = tempfile::tempdir()?;
-        let manager1_protocol = manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
+        let manager1_protocol = ManagerProtocol::new(manager1_storage_path.path()).await?;
 
         let manager2_storage_path = tempfile::tempdir()?;
-        let manager2_protocol = manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
+        let manager2_protocol = ManagerProtocol::new(manager2_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
 
@@ -163,10 +173,10 @@ mod tests {
     #[tokio::test]
     async fn test_claim_rejected_by_machine() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager_storage_path = tempfile::tempdir()?;
-        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+        let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
 
@@ -183,7 +193,7 @@ mod tests {
             tx_machine.send(false).unwrap();
             (pin_machine, machine_protocol)
         });
-        let ((pin_mgr, manager_protocol), (_pin_machine, mut machine_protocol)) =
+        let ((pin_mgr, manager_protocol), (_pin_machine, machine_protocol)) =
             tokio::try_join!(manager_task, machine_task)?;
         let _ = pin_mgr;
 
@@ -219,13 +229,13 @@ mod tests {
     #[tokio::test]
     async fn test_claim_rejected_by_manager() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager1_storage_path = tempfile::tempdir()?;
-        let manager1_protocol = manager::ManagerProtocol::new(manager1_storage_path.path()).await?;
+        let manager1_protocol = ManagerProtocol::new(manager1_storage_path.path()).await?;
 
         let manager2_storage_path = tempfile::tempdir()?;
-        let manager2_protocol = manager::ManagerProtocol::new(manager2_storage_path.path()).await?;
+        let manager2_protocol = ManagerProtocol::new(manager2_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
 
@@ -266,10 +276,10 @@ mod tests {
     #[tokio::test]
     async fn test_machine_restart_persistence() -> anyhow::Result<()> {
         let machine_storage_path = tempfile::tempdir()?;
-        let mut machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
         let manager_storage_path = tempfile::tempdir()?;
-        let manager_protocol = manager::ManagerProtocol::new(manager_storage_path.path()).await?;
+        let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
         let addr_before = machine_protocol.node_addr().await?;
         let addr_for_mgr = addr_before.clone();

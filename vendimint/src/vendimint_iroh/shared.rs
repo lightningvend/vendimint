@@ -1,27 +1,31 @@
 use std::path::{Path, PathBuf};
 
-use fedimint_core::{config::FederationId, db::DatabaseValue, invite_code::InviteCode};
-use fedimint_lnv2_common::contracts::IncomingContract;
+use fedimint_core::{
+    config::FederationId, db::DatabaseValue, invite_code::InviteCode, secp256k1::PublicKey,
+};
+use fedimint_lnv2_common::ContractId;
+use fedimint_lnv2_remote_client::ClaimableContract;
 use iroh::{
     Endpoint, SecretKey,
     endpoint::Connection,
     protocol::{Router, RouterBuilder},
 };
 use iroh_blobs::{ALPN as BLOBS_ALPN, net_protocol::Blobs};
-use iroh_docs::{ALPN as DOCS_ALPN, AuthorId, protocol::Docs};
+use iroh_docs::{ALPN as DOCS_ALPN, protocol::Docs};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, net::Gossip};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-const INCOMING_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
-pub const FEDERATION_INVITE_CODE_KEY: [u8; 2] = [0x02, 0xFF];
+pub const CLAIMABLE_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
+pub const MACHINE_CONFIG_KEY: [u8; 2] = [0x02, 0xFF];
 pub const CLAIM_ALPN: &[u8] = b"machine-claim/0";
 const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct MachineConfig {
     pub federation_invite_code: InviteCode,
+    pub claimer_pk: PublicKey,
 }
 
 const IROH_SUBDIR: &str = "iroh";
@@ -42,6 +46,7 @@ impl SharedProtocol {
             SecretKey::from_str(key_str.trim())?
         } else {
             let key = SecretKey::generate(OsRng);
+            std::fs::create_dir_all(storage_path).unwrap();
             std::fs::write(&secret_key_path, key.to_string())?;
             key
         };
@@ -84,19 +89,39 @@ impl SharedProtocol {
         })
     }
 
-    pub async fn get_author_id(&self) -> anyhow::Result<AuthorId> {
-        self.docs.client().authors().default().await
-    }
-
-    pub fn create_incoming_contract_machine_doc_key(
+    pub fn create_claimable_contract_machine_doc_key(
         federation_id: &FederationId,
-        incoming_contract: &IncomingContract,
+        claimable_contract: &ClaimableContract,
     ) -> Vec<u8> {
-        let mut key = INCOMING_CONTRACT_PREFIX.to_vec();
+        let mut key = CLAIMABLE_CONTRACT_PREFIX.to_vec();
         key.append(&mut federation_id.0.to_bytes());
-        let contract_id_hash_bytes: [u8; 32] = *incoming_contract.contract_id().0.as_ref();
+        let contract_id_hash_bytes: [u8; 32] =
+            *claimable_contract.contract.contract_id().0.as_ref();
         key.append(&mut contract_id_hash_bytes.to_vec());
         key
+    }
+
+    pub fn parse_incoming_contract_machine_doc_key(
+        key: &[u8],
+    ) -> anyhow::Result<(FederationId, ContractId)> {
+        if key.len() != 66 {
+            return Err(anyhow::anyhow!("Invalid key length"));
+        }
+
+        if !key.starts_with(&CLAIMABLE_CONTRACT_PREFIX) {
+            return Err(anyhow::anyhow!("Invalid key prefix"));
+        }
+
+        let federation_id_bytes: [u8; 32] = key[2..34].try_into().unwrap();
+        let contract_id_hash_bytes: [u8; 32] = key[34..66].try_into().unwrap();
+
+        let federation_id = FederationId(*bitcoin::hashes::sha256::Hash::from_bytes_ref(
+            &federation_id_bytes,
+        ));
+        let contract_id = ContractId(*bitcoin::hashes::sha256::Hash::from_bytes_ref(
+            &contract_id_hash_bytes,
+        ));
+        Ok((federation_id, contract_id))
     }
 }
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use fedimint_core::config::FederationId;
-use fedimint_lnv2_common::contracts::IncomingContract;
+use fedimint_lnv2_remote_client::ClaimableContract;
 use iroh::{
     NodeAddr, PublicKey,
     endpoint::Connection,
@@ -28,9 +28,8 @@ use tokio::{
     sync::{Mutex, mpsc, oneshot},
 };
 
-use shared::{
-    CLAIM_ALPN, FEDERATION_INVITE_CODE_KEY, MachineConfig, SharedProtocol,
-    claim_pin_from_keying_material,
+use super::shared::{
+    CLAIM_ALPN, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
@@ -41,7 +40,7 @@ pub struct MachineProtocol {
     blobs: Blobs<iroh_blobs::store::fs::Store>,
     docs: Docs<iroh_blobs::store::fs::Store>,
     app_storage_path: PathBuf,
-    claim_request_receiver: mpsc::Receiver<(u32, oneshot::Sender<bool>)>,
+    claim_request_receiver: Mutex<mpsc::Receiver<(u32, oneshot::Sender<bool>)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -134,16 +133,19 @@ impl MachineProtocol {
         shared_protocol.router_builder = shared_protocol.router_builder.accept(CLAIM_ALPN, handler);
 
         Ok(Self {
-            router: shared_protocol.router_builder.spawn(),
+            router: shared_protocol.router_builder.spawn().await?,
             blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
-            claim_request_receiver: rx,
+            claim_request_receiver: Mutex::new(rx),
         })
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.router.shutdown().await
+        self.router.shutdown().await?;
+        self.blobs.shutdown().await;
+        self.docs.shutdown().await;
+        Ok(())
     }
 
     #[must_use]
@@ -156,45 +158,35 @@ impl MachineProtocol {
     }
 
     pub async fn await_next_incoming_claim_request(
-        &mut self,
+        &self,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
         self.claim_request_receiver
+            .lock()
+            .await
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("claim channel closed"))
     }
 
-    pub async fn share_machine_doc(
-        &self,
-        mode: ShareMode,
-        addr_info_options: AddrInfoOptions,
-    ) -> anyhow::Result<DocTicket> {
-        self.get_or_create_machine_doc()
-            .await
-            .unwrap()
-            .share(mode, addr_info_options)
-            .await
-    }
-
     pub async fn write_payment_to_machine_doc(
         &self,
         federation_id: &FederationId,
-        incoming_contract: &IncomingContract,
+        claimable_contract: &ClaimableContract,
     ) -> anyhow::Result<()> {
         let doc = self.get_or_create_machine_doc().await?;
 
-        let key = SharedProtocol::create_incoming_contract_machine_doc_key(
+        let key = SharedProtocol::create_claimable_contract_machine_doc_key(
             federation_id,
-            incoming_contract,
+            claimable_contract,
         );
 
         doc.set_bytes(
             self.docs.client().authors().default().await?,
             key,
-            bincode::serde::encode_to_vec(incoming_contract, bincode::config::standard()).unwrap(),
+            bincode::serde::encode_to_vec(claimable_contract, bincode::config::standard())?,
         )
-        .await
-        .unwrap();
+        .await?;
+
         Ok(())
     }
 
@@ -202,7 +194,7 @@ impl MachineProtocol {
         let Some(entry) = self
             .get_or_create_machine_doc()
             .await?
-            .get_one(Query::key_exact(FEDERATION_INVITE_CODE_KEY))
+            .get_one(Query::key_exact(MACHINE_CONFIG_KEY))
             .await?
         else {
             return Ok(None);
@@ -229,6 +221,8 @@ async fn get_or_create_machine_doc(
     app_storage_path: &Path,
     docs: &Docs<iroh_blobs::store::fs::Store>,
 ) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
+    std::fs::create_dir_all(app_storage_path).unwrap();
+
     let doc_ticket_path = app_storage_path.join(MACHINE_DOC_TICKET_PATH);
 
     let doc_ticket_or: Option<DocTicket> = match std::fs::read_to_string(&doc_ticket_path) {
@@ -263,9 +257,7 @@ mod tests {
         let storage_path = tempfile::tempdir().unwrap();
         let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
 
-        let doc_ticket = machine_protocol
-            .share_machine_doc(ShareMode::Write, AddrInfoOptions::Id)
-            .await?;
+        let node_addr = machine_protocol.node_addr().await?;
 
         // Shutdown and restart to test basic persistence.
         machine_protocol.shutdown().await?;
@@ -274,14 +266,8 @@ mod tests {
         let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
 
         assert_eq!(
-            format!(
-                "{:?}",
-                machine_protocol
-                    .share_machine_doc(ShareMode::Write, AddrInfoOptions::Id)
-                    .await?
-                    .capability
-            ),
-            format!("{:?}", doc_ticket.capability)
+            machine_protocol.node_addr().await?.node_id,
+            node_addr.node_id
         );
 
         Ok(())

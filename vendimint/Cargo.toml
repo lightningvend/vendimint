@@ -1,0 +1,43 @@
+[package]
+name = "vendimint"
+publish = true
+authors = { workspace = true }
+edition = { workspace = true }
+version = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+bincode = { workspace = true }
+bip39 = { workspace = true }
+bitcoin = { workspace = true }
+dashmap = { workspace = true }
+fedimint-api-client = { workspace = true }
+fedimint-bip39 = { workspace = true }
+fedimint-client = { workspace = true }
+fedimint-core = { workspace = true }
+fedimint-derive-secret = { workspace = true }
+fedimint-lnv2-common = { workspace = true }
+fedimint-lnv2-remote-client = { workspace = true }
+fedimint-mint-client = { workspace = true }
+fedimint-rocksdb = { workspace = true }
+futures-util = { workspace = true }
+iroh = { workspace = true }
+iroh-blobs = { workspace = true }
+iroh-docs = { workspace = true }
+iroh-gossip = { workspace = true }
+lightning-invoice = { workspace = true }
+n0-future = { workspace = true }
+quic-rpc = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+fedimint-tpe = { workspace = true }
+tempfile = { workspace = true }
