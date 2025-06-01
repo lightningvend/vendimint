@@ -2,9 +2,20 @@
 name = "tests"
 version = "0.1.0"
 edition = "2024"
+publish = false
+
+[[bin]]
+name = "protocol-tests"
+path = "bin/tests.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+devimint = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+devimint = { workspace = true }
 fedimint-core = { workspace = true }
 fedimint-lnv2-common = { workspace = true }
 fedimint-tpe = { workspace = true }

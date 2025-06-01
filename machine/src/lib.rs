@@ -134,7 +134,7 @@ impl MachineProtocol {
         shared_protocol.router_builder = shared_protocol.router_builder.accept(CLAIM_ALPN, handler);
 
         Ok(Self {
-            router: shared_protocol.router_builder.spawn(),
+            router: shared_protocol.router_builder.spawn().await?,
             blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,

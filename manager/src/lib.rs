@@ -24,7 +24,7 @@ impl ManagerProtocol {
         let shared_protocol = SharedProtocol::new(storage_path).await?;
 
         let manager_protocol = Self {
-            router: shared_protocol.router_builder.spawn(),
+            router: shared_protocol.router_builder.spawn().await?,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
         };
