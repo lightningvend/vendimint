@@ -42,3 +42,30 @@ shared = { path = "./shared" }
 tempfile = "3.20.0"
 tokio = { version = "1.45.0", features = ["macros", "rt"] }
 uuid = { version = "1.16.0", features = ["v4"] }
+
+[profile.dev]
+split-debuginfo = "packed"
+
+# In dev mode, optimize perf-critical crates (usually just crypto crates).
+[profile.dev.package]
+secp256k1 = { opt-level = 3 }
+secp256k1-sys = { opt-level = 3 }
+bitcoin_hashes = { opt-level = 3 }
+ff = { opt-level = 3 }
+group = { opt-level = 3 }
+tikv-jemalloc-sys = { opt-level = 3 }
+pairing = { opt-level = 3 }
+rand_core = { opt-level = 3 }
+byteorder = { opt-level = 3 }
+zeroize = { opt-level = 3 }
+bls12_381 = { opt-level = 3 }
+subtle = { opt-level = 3 }
+ring = { opt-level = 3 }
+
+[profile.ci]
+inherits = "dev"
+debug = "line-tables-only"
+incremental = false
+
+[profile.release]
+debug = "line-tables-only"
