@@ -1,5 +1,7 @@
 [package]
 name = "vendimint"
+description = "Fedimint point-of-sale remote receive protocol"
+license = "MIT"
 publish = true
 authors = { workspace = true }
 edition = { workspace = true }
