@@ -3,7 +3,9 @@ use std::{path::Path, sync::Arc, time::Duration};
 use crate::fedimint_wallet::Wallet;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::ManagerProtocol;
-use bitcoin::{bip32::Xpriv, secp256k1::PublicKey};
+use bitcoin::Network;
+use bitcoin::secp256k1::PublicKey;
+use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
 use iroh::NodeAddr;
@@ -26,11 +28,11 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub async fn new(storage_path: &Path, xprivkey: &Xpriv) -> anyhow::Result<Self> {
+    pub async fn new(storage_path: &Path, network: Network) -> anyhow::Result<Self> {
         let iroh_protocol =
             Arc::new(ManagerProtocol::new(&storage_path.join(PROTOCOL_SUBDIR)).await?);
 
-        let wallet = Arc::new(Wallet::new(xprivkey, storage_path.join(FEDIMINT_SUBDIR)));
+        let wallet = Arc::new(Wallet::new(storage_path.join(FEDIMINT_SUBDIR), network)?);
 
         wallet.connect_to_joined_federations().await?;
 
@@ -104,6 +106,10 @@ impl Manager {
 
     pub fn get_fedimint_lnv2_claim_pubkey(&self, federation_id: FederationId) -> Option<PublicKey> {
         self.wallet.get_lnv2_claim_pubkey(federation_id)
+    }
+
+    pub async fn get_local_balance(&self) -> Amount {
+        self.wallet.get_local_balance().await
     }
 
     pub async fn sweep_all_ecash_notes<M: Serialize + Send>(
