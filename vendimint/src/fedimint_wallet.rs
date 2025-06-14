@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt::Display, path::PathBuf, sync::Arc, time::D
 
 use bip39::Mnemonic;
 use bitcoin::{
-    Network,
+    NetworkKind,
     bip32::{ChildNumber, Xpriv},
     secp256k1::{PublicKey, Secp256k1},
 };
@@ -106,7 +106,7 @@ impl Drop for Wallet {
 }
 
 impl Wallet {
-    pub fn new(xprivkey: &Xpriv, network: Network, fedimint_clients_data_dir: PathBuf) -> Self {
+    pub fn new(xprivkey: &Xpriv, fedimint_clients_data_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&fedimint_clients_data_dir).unwrap();
 
         let (view_update_sender, view_update_receiver) = watch::channel(WalletView {
@@ -162,7 +162,7 @@ impl Wallet {
         });
 
         Self {
-            derivable_secret: get_derivable_secret(xprivkey, network),
+            derivable_secret: get_derivable_secret(xprivkey),
             clients,
             fedimint_clients_data_dir: Mutex::from(fedimint_clients_data_dir),
             view_update_receiver,
@@ -539,14 +539,14 @@ impl Wallet {
     }
 }
 
-fn get_derivable_secret(xprivkey: &Xpriv, network: Network) -> DerivableSecret {
+fn get_derivable_secret(xprivkey: &Xpriv) -> DerivableSecret {
     let context = Secp256k1::new();
 
     let xpriv = xprivkey
         .derive_priv(
             &context,
             &[
-                ChildNumber::from_hardened_idx(coin_type_from_network(network))
+                ChildNumber::from_hardened_idx(coin_type_from_network(xprivkey.network))
                     .expect("Should only fail if 2^31 <= index"),
             ],
         )
@@ -560,9 +560,9 @@ fn get_derivable_secret(xprivkey: &Xpriv, network: Network) -> DerivableSecret {
     Bip39RootSecretStrategy::<12>::to_root_secret(&mnemonic)
 }
 
-const fn coin_type_from_network(network: Network) -> u32 {
-    match network {
-        Network::Bitcoin => 0,
-        _ => 1,
+const fn coin_type_from_network(network_kind: NetworkKind) -> u32 {
+    match network_kind {
+        NetworkKind::Main => 0,
+        NetworkKind::Test => 1,
     }
 }

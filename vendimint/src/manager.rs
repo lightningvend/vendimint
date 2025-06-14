@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use crate::fedimint_wallet::Wallet;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::ManagerProtocol;
-use bitcoin::{Network, bip32::Xpriv, secp256k1::PublicKey};
+use bitcoin::{bip32::Xpriv, secp256k1::PublicKey};
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
 use iroh::NodeAddr;
@@ -26,19 +26,11 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub async fn new(
-        storage_path: &Path,
-        xprivkey: &Xpriv,
-        network: Network,
-    ) -> anyhow::Result<Self> {
+    pub async fn new(storage_path: &Path, xprivkey: &Xpriv) -> anyhow::Result<Self> {
         let iroh_protocol =
             Arc::new(ManagerProtocol::new(&storage_path.join(PROTOCOL_SUBDIR)).await?);
 
-        let wallet = Arc::new(Wallet::new(
-            xprivkey,
-            network,
-            storage_path.join(FEDIMINT_SUBDIR),
-        ));
+        let wallet = Arc::new(Wallet::new(xprivkey, storage_path.join(FEDIMINT_SUBDIR)));
 
         wallet.connect_to_joined_federations().await?;
 

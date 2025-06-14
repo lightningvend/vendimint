@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use crate::fedimint_wallet::Wallet;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::MachineProtocol;
-use bitcoin::{Network, bip32::Xpriv};
+use bitcoin::bip32::Xpriv;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
@@ -26,19 +26,11 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub async fn new(
-        storage_path: &Path,
-        xprivkey: &Xpriv,
-        network: Network,
-    ) -> anyhow::Result<Self> {
+    pub async fn new(storage_path: &Path, xprivkey: &Xpriv) -> anyhow::Result<Self> {
         let iroh_protocol =
             Arc::new(MachineProtocol::new(&storage_path.join(PROTOCOL_SUBDIR)).await?);
 
-        let wallet = Arc::new(Wallet::new(
-            xprivkey,
-            network,
-            storage_path.join(FEDIMINT_SUBDIR),
-        ));
+        let wallet = Arc::new(Wallet::new(xprivkey, storage_path.join(FEDIMINT_SUBDIR)));
 
         wallet.connect_to_joined_federations().await?;
 

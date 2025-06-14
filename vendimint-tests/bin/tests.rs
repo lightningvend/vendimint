@@ -27,23 +27,15 @@ async fn main() -> anyhow::Result<()> {
             let machine_storage_path = tempfile::tempdir()?;
             let machine_xpriv =
                 bitcoin::bip32::Xpriv::new_master(Network::Regtest, &[1, 2, 3, 4]).unwrap();
-            let machine = vendimint::Machine::new(
-                machine_storage_path.path(),
-                &machine_xpriv,
-                Network::Regtest,
-            )
-            .await?;
+            let machine =
+                vendimint::Machine::new(machine_storage_path.path(), &machine_xpriv).await?;
 
             println!("Starting vendimint manager...");
             let manager_storage_path = tempfile::tempdir()?;
             let manager_xpriv =
                 bitcoin::bip32::Xpriv::new_master(Network::Regtest, &[5, 6, 7, 8]).unwrap();
-            let manager = vendimint::Manager::new(
-                manager_storage_path.path(),
-                &manager_xpriv,
-                Network::Regtest,
-            )
-            .await?;
+            let manager =
+                vendimint::Manager::new(manager_storage_path.path(), &manager_xpriv).await?;
 
             println!("Claiming machine from manager...");
             let (manager_claim_pin, manager_claim_accepter) =
