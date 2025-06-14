@@ -25,17 +25,13 @@ async fn main() -> anyhow::Result<()> {
 
             println!("Starting vendimint machine...");
             let machine_storage_path = tempfile::tempdir()?;
-            let machine_xpriv =
-                bitcoin::bip32::Xpriv::new_master(Network::Regtest, &[1, 2, 3, 4]).unwrap();
             let machine =
-                vendimint::Machine::new(machine_storage_path.path(), &machine_xpriv).await?;
+                vendimint::Machine::new(machine_storage_path.path(), Network::Regtest).await?;
 
             println!("Starting vendimint manager...");
             let manager_storage_path = tempfile::tempdir()?;
-            let manager_xpriv =
-                bitcoin::bip32::Xpriv::new_master(Network::Regtest, &[5, 6, 7, 8]).unwrap();
             let manager =
-                vendimint::Manager::new(manager_storage_path.path(), &manager_xpriv).await?;
+                vendimint::Manager::new(manager_storage_path.path(), Network::Regtest).await?;
 
             println!("Claiming machine from manager...");
             let (manager_claim_pin, manager_claim_accepter) =
@@ -84,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
             let (invoice, final_state_receiver) = machine
                 .receive_payment(
                     Amount::from_sats(1000),
-                    30,
+                    60,
                     Bolt11InvoiceDescription::Direct("Cherry OliPop".to_string()),
                     Some(dev_fed.gw_ldk().await?.addr.parse()?),
                 )

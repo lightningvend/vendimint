@@ -1,8 +1,10 @@
-use std::{collections::BTreeMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap, fmt::Display, path::PathBuf, str::FromStr, sync::Arc, time::Duration,
+};
 
 use bip39::Mnemonic;
 use bitcoin::{
-    NetworkKind,
+    Network, NetworkKind,
     bip32::{ChildNumber, Xpriv},
     secp256k1::{PublicKey, Secp256k1},
 };
@@ -28,6 +30,9 @@ use serde::Serialize;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
+
+const MNEMONIC_PATH: &str = "mnemonic.txt";
+const MNEMONIC_PASSWORD: &str = "";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletView {
@@ -106,7 +111,7 @@ impl Drop for Wallet {
 }
 
 impl Wallet {
-    pub fn new(xprivkey: &Xpriv, fedimint_clients_data_dir: PathBuf) -> Self {
+    pub fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&fedimint_clients_data_dir).unwrap();
 
         let (view_update_sender, view_update_receiver) = watch::channel(WalletView {
@@ -161,14 +166,27 @@ impl Wallet {
             }
         });
 
-        Self {
-            derivable_secret: get_derivable_secret(xprivkey),
+        let mnemonic_path = fedimint_clients_data_dir.join(MNEMONIC_PATH);
+
+        if !std::fs::exists(&mnemonic_path)? {
+            let mnemonic = bip39::Mnemonic::generate(12).expect("12-word mnemonics are valid");
+            std::fs::write(&mnemonic_path, mnemonic.to_string())?;
+        }
+
+        let mnemonic_string = std::fs::read_to_string(&mnemonic_path)?;
+        let mnemonic = bip39::Mnemonic::from_str(&mnemonic_string).expect("Valid mnemonic");
+
+        let xprivkey = Xpriv::new_master(network, &mnemonic.to_seed_normalized(MNEMONIC_PASSWORD))
+            .expect("Can never fail (see `new_master`'s implementation)");
+
+        Ok(Self {
+            derivable_secret: get_derivable_secret(&xprivkey),
             clients,
             fedimint_clients_data_dir: Mutex::from(fedimint_clients_data_dir),
             view_update_receiver,
             force_update_view_sender,
             view_update_task,
-        }
+        })
     }
 
     // TODO: Use this method or remove it.
@@ -376,8 +394,6 @@ impl Wallet {
         Ok((invoice, payment_completion_receiver))
     }
 
-    // TODO: Use this method or remove it.
-    #[allow(dead_code)]
     pub async fn get_local_balance(&self) -> Amount {
         let mut balance = Amount::ZERO;
         for client in self.clients.iter() {
