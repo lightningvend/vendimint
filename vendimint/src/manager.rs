@@ -118,7 +118,7 @@ impl Manager {
         try_cancel_after: Duration,
         include_invite: bool,
         extra_meta: M,
-    ) -> anyhow::Result<OOBNotes> {
+    ) -> anyhow::Result<Option<OOBNotes>> {
         self.wallet
             .sweep_all_ecash_notes(federation_id, try_cancel_after, include_invite, extra_meta)
             .await
@@ -146,8 +146,14 @@ impl Manager {
         }
 
         // 3. Remove the successfully transferred payments from the iroh doc.
-        let _ = manager_protocol
-            .remove_claimable_contracts(claimed_contracts)
-            .await;
+        if !claimed_contracts.is_empty() {
+            let contract_count = claimed_contracts.len();
+
+            let _ = manager_protocol
+                .remove_claimable_contracts(claimed_contracts)
+                .await;
+
+            tracing::info!("Transferred {contract_count} payment(s) from iroh doc");
+        }
     }
 }

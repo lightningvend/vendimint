@@ -12,8 +12,11 @@ mod tests {
 
     use std::{str::FromStr, time::Duration};
 
-    use fedimint_core::{Amount, config::FederationId, invite_code::InviteCode};
+    use fedimint_core::{
+        Amount, OutPoint, TransactionId, config::FederationId, invite_code::InviteCode,
+    };
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
+    use fedimint_lnv2_remote_client::ClaimableContract;
     use tpe::{AggregatePublicKey, G1Affine};
 
     // TODO: Cleanup this test, and also test the protocols more thoroughly.
@@ -28,24 +31,6 @@ mod tests {
         let pk = fedimint_core::secp256k1::PublicKey::from_str(
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
         )?;
-
-        let _federation_id = FederationId::dummy();
-
-        let _incoming_contract = IncomingContract::new(
-            AggregatePublicKey(G1Affine::identity()),
-            [127; 32],
-            [255; 32],
-            PaymentImage::Point(pk),
-            Amount { msats: 1234 },
-            5678,
-            pk,
-            pk,
-            pk,
-        );
-
-        // machine_protocol
-        //     .write_payment_to_machine_doc(&federation_id, &incoming_contract)
-        //     .await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
         let manager_task = tokio::spawn(async move {
@@ -94,18 +79,64 @@ mod tests {
             if let Ok(Some(_)) = machine_protocol.get_machine_config().await {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
 
             assert!(
                 i != 9,
                 "Timeout waiting for federation invite code to be set"
             );
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         assert_eq!(
             machine_protocol.get_machine_config().await?,
             Some(machine_config)
         );
+
+        let dummy_federation_id = FederationId::dummy();
+
+        let dummy_claimable_contract = ClaimableContract {
+            contract: IncomingContract::new(
+                AggregatePublicKey(G1Affine::identity()),
+                [127; 32],
+                [255; 32],
+                PaymentImage::Point(pk),
+                Amount { msats: 1234 },
+                5678,
+                pk,
+                pk,
+                pk,
+            ),
+            outpoint: OutPoint {
+                txid: TransactionId::from_raw_hash(dummy_federation_id.0),
+                out_idx: 0,
+            },
+        };
+
+        machine_protocol
+            .write_payment_to_machine_doc(&dummy_federation_id, &dummy_claimable_contract)
+            .await?;
+
+        // Wait for the machine protocol to receive the invite code.
+        for i in 0..10 {
+            if manager_protocol.get_claimable_contracts().await.is_ok() {
+                break;
+            }
+
+            assert!(i != 9, "Timeout waiting for claimable contracts to be set");
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        let claimable_contracts = manager_protocol.get_claimable_contracts().await?;
+        assert_eq!(manager_protocol.get_claimable_contracts().await?.len(), 1);
+
+        manager_protocol
+            .remove_claimable_contracts(claimable_contracts)
+            .await?;
+
+        let claimable_contracts = manager_protocol.get_claimable_contracts().await?;
+        assert!(claimable_contracts.is_empty());
 
         Ok(())
     }
