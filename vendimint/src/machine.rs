@@ -27,10 +27,16 @@ pub struct Machine {
 
 impl Machine {
     pub async fn new(storage_path: &Path, network: Network) -> anyhow::Result<Self> {
-        let iroh_protocol =
-            Arc::new(MachineProtocol::new(&storage_path.join(PROTOCOL_SUBDIR)).await?);
+        let network_partitioned_storage_path = storage_path.join(network.to_string());
 
-        let wallet = Arc::new(Wallet::new(storage_path.join(FEDIMINT_SUBDIR), network)?);
+        let iroh_protocol = Arc::new(
+            MachineProtocol::new(&network_partitioned_storage_path.join(PROTOCOL_SUBDIR)).await?,
+        );
+
+        let wallet = Arc::new(Wallet::new(
+            network_partitioned_storage_path.join(FEDIMINT_SUBDIR),
+            network,
+        )?);
 
         wallet.connect_to_joined_federations().await?;
 
