@@ -45,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
             assert!(manager_claim_accepter.send(true).is_ok());
 
             let federation_invite_code: InviteCode = fed.invite_code()?.parse()?;
+            let federation_id = federation_invite_code.federation_id();
 
             println!("Manager joining federation...");
             manager
@@ -79,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Machine generating invoice...");
             let (invoice, final_state_receiver) = machine
                 .receive_payment(
-                    Amount::from_sats(1000),
+                    Amount::from_sats(1_000),
                     60,
                     Bolt11InvoiceDescription::Direct("Cherry OliPop".to_string()),
                     Some(dev_fed.gw_ldk().await?.addr.parse()?),
@@ -97,6 +98,31 @@ async fn main() -> anyhow::Result<()> {
                 final_state_receiver.await?,
                 FinalRemoteReceiveOperationState::Funded
             );
+
+            println!("Extracting ecash from manager...");
+            let mut i = 0;
+            let ecash = loop {
+                if let Some(ecash) = manager
+                    .sweep_all_ecash_notes(
+                        federation_id,
+                        Duration::from_secs(30),
+                        false,
+                        None::<()>,
+                    )
+                    .await?
+                {
+                    break ecash;
+                }
+
+                i += 1;
+                assert!(i <= 100, "Timeout waiting for ecash");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            };
+
+            // Original 1,000 sat payment, minus federation and gateway fees.
+            assert_eq!(ecash.total_amount(), Amount::from_msats(943_906));
+
+            println!("Extracted manager ecash balance: {}", ecash.total_amount());
 
             println!("Shutting down machine and manager...");
             machine.shutdown().await?;

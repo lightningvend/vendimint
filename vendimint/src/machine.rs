@@ -154,9 +154,13 @@ impl Machine {
 
         // 3. Remove the successfully transferred payments from the wallet.
         if !contract_ids.is_empty() {
+            let contract_count = contract_ids.len();
+
             wallet
                 .remove_claimed_contracts(federation_id, contract_ids)
                 .await;
+
+            tracing::info!("Transferred {contract_count} payment(s) to iroh doc");
         }
     }
 }

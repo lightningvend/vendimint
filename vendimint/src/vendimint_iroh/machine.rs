@@ -183,7 +183,7 @@ impl MachineProtocol {
         doc.set_bytes(
             self.docs.client().authors().default().await?,
             key,
-            bincode::serde::encode_to_vec(claimable_contract, bincode::config::standard())?,
+            serde_json::to_vec(claimable_contract)?,
         )
         .await?;
 

@@ -408,7 +408,7 @@ impl Wallet {
         try_cancel_after: Duration,
         include_invite: bool,
         extra_meta: M,
-    ) -> anyhow::Result<OOBNotes> {
+    ) -> anyhow::Result<Option<OOBNotes>> {
         let client = self
             .clients
             .get(&federation_id)
@@ -422,6 +422,12 @@ impl Wallet {
             )
             .await
             .total_amount();
+
+        // This is needed because `spend_notes_with_selector`
+        // will panic if the requested amount is zero.
+        if ecash_balance == Amount::ZERO {
+            return Ok(None);
+        }
 
         // Note: Since we use the `SelectNotesWithExactAmount` note selector, we
         // could hit a race condition if this method is called twice concurrently.
@@ -440,7 +446,7 @@ impl Wallet {
             )
             .await?;
 
-        Ok(oob_notes)
+        Ok(Some(oob_notes))
     }
 
     /// Get claimable contracts from a federation.

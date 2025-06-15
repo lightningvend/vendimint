@@ -218,6 +218,13 @@ impl ManagerProtocol {
                     .read_to_bytes(entry.content_hash())
                     .await?;
 
+                // TODO: Add a devimint test to see if this block is necessary.
+                if bytes.is_empty() {
+                    // This means the manager has previously removed the
+                    // contract by setting the value to an empty byte array.
+                    continue;
+                }
+
                 let claimable_contract: ClaimableContract = serde_json::from_slice(&bytes)?;
 
                 payments.push((machine_id, federation_id, claimable_contract));
@@ -249,7 +256,7 @@ impl ManagerProtocol {
                 &claimable_contract,
             );
 
-            machine_doc.set_bytes(author_id, key, vec![]).await?;
+            machine_doc.del(author_id, key).await?;
         }
 
         Ok(())
