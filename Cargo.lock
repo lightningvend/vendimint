@@ -2040,7 +2040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68a27f0a2651f507903d67f8fb0688291e3e69f70381cdb5ee9729366f795f80"
 dependencies = [
  "heck 0.5.0",
- "indexmap 2.9.0",
+ "indexmap 1.9.3",
  "itertools 0.13.0",
  "proc-macro-crate 3.3.0",
  "proc-macro2",
@@ -2725,7 +2725,7 @@ dependencies = [
 [[package]]
 name = "fedimint-build"
 version = "0.8.0-alpha"
-source = "git+https://github.com/fedimint/fedimint#c89cd026d51fc60e24ff2cc019b9c4cdbb80f8c7"
+source = "git+https://github.com/fedimint/fedimint#7f8a2b116fd3c94f0bd2e85bec1fa7ebfa5df656"
 dependencies = [
  "serde_json",
 ]
