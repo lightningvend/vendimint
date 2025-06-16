@@ -21,4 +21,5 @@ fedimint-lnv2-common = { workspace = true }
 fedimint-lnv2-remote-client = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 vendimint = { workspace = true }

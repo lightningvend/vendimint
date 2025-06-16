@@ -11004,6 +11004,7 @@ dependencies = [
  "fedimint-lnv2-remote-client",
  "tempfile",
  "tokio",
+ "tracing",
  "vendimint",
 ]
 

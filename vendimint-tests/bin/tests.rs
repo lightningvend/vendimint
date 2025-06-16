@@ -9,11 +9,11 @@ use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
 async fn main() -> anyhow::Result<()> {
     devimint::run_devfed_test()
         .call(|dev_fed, _process_mgr| async move {
-            println!("Starting devimint test...");
+            tracing::info!("Starting devimint test...");
 
             let fed = dev_fed.fed().await?;
 
-            println!("Pegging in gateways...");
+            tracing::info!("Pegging in gateways...");
             fed.pegin_gateways(
                 1_000_000,
                 vec![
@@ -23,17 +23,17 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
 
-            println!("Starting vendimint machine...");
+            tracing::info!("Starting vendimint machine...");
             let machine_storage_path = tempfile::tempdir()?;
             let machine =
                 vendimint::Machine::new(machine_storage_path.path(), Network::Regtest).await?;
 
-            println!("Starting vendimint manager...");
+            tracing::info!("Starting vendimint manager...");
             let manager_storage_path = tempfile::tempdir()?;
             let manager =
                 vendimint::Manager::new(manager_storage_path.path(), Network::Regtest).await?;
 
-            println!("Claiming machine from manager...");
+            tracing::info!("Claiming machine from manager...");
             let (manager_claim_pin, manager_claim_accepter) =
                 manager.claim_machine(machine.node_addr().await?).await?;
 
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
             let federation_invite_code: InviteCode = fed.invite_code()?.parse()?;
             let federation_id = federation_invite_code.federation_id();
 
-            println!("Manager joining federation...");
+            tracing::info!("Manager joining federation...");
             manager
                 .join_federation(federation_invite_code.clone())
                 .await?;
@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap(),
             };
 
-            println!("Configuring machine...");
+            tracing::info!("Configuring machine...");
             manager
                 .set_machine_config(&machine_id, &machine_config)
                 .await?;
@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
             // TODO: Wait more intelligently.
             tokio::time::sleep(Duration::from_secs(5)).await;
 
-            println!("Machine generating invoice...");
+            tracing::info!("Machine generating invoice...");
             let (invoice, operation_id) = machine
                 .receive_payment(
                     Amount::from_sats(1_000),
@@ -87,14 +87,14 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
 
-            println!("Paying invoice...");
+            tracing::info!("Paying invoice...");
             dev_fed
                 .lnd()
                 .await?
                 .pay_bolt11_invoice(invoice.to_string())
                 .await?;
 
-            println!("Waiting for payment to be received to machine...");
+            tracing::info!("Waiting for payment to be received to machine...");
             let final_payment_state = machine
                 .await_receive_payment_final_state(operation_id)
                 .await?;
@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
                 FinalRemoteReceiveOperationState::Funded
             );
 
-            println!("Extracting ecash from manager...");
+            tracing::info!("Extracting ecash from manager...");
             let mut i = 0;
             let ecash = loop {
                 if let Some(ecash) = manager
@@ -127,13 +127,13 @@ async fn main() -> anyhow::Result<()> {
             // Original 1,000 sat payment, minus federation and gateway fees.
             assert_eq!(ecash.total_amount(), Amount::from_msats(943_906));
 
-            println!("Extracted manager ecash balance: {}", ecash.total_amount());
+            tracing::info!("Extracted manager ecash balance: {}", ecash.total_amount());
 
-            println!("Shutting down machine and manager...");
+            tracing::info!("Shutting down machine and manager...");
             machine.shutdown().await?;
             manager.shutdown().await?;
 
-            println!("Successfully completed devimint test!");
+            tracing::info!("Successfully completed devimint test!");
 
             Ok(())
         })
