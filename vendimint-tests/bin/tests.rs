@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             println!("Machine generating invoice...");
-            let (invoice, final_state_receiver) = machine
+            let (invoice, operation_id) = machine
                 .receive_payment(
                     Amount::from_sats(1_000),
                     60,
@@ -94,8 +94,13 @@ async fn main() -> anyhow::Result<()> {
                 .pay_bolt11_invoice(invoice.to_string())
                 .await?;
 
+            println!("Waiting for payment to be received to machine...");
+            let final_payment_state = machine
+                .await_receive_payment_final_state(operation_id)
+                .await?;
+
             assert_eq!(
-                final_state_receiver.await?,
+                final_payment_state,
                 FinalRemoteReceiveOperationState::Funded
             );
 

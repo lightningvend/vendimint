@@ -6,12 +6,13 @@ use bip39::Mnemonic;
 use bitcoin::{
     Network, NetworkKind,
     bip32::{ChildNumber, Xpriv},
+    hex::DisplayHex,
     secp256k1::{PublicKey, Secp256k1},
 };
 use dashmap::DashMap;
 use fedimint_api_client::api::net::Connector;
 use fedimint_bip39::Bip39RootSecretStrategy;
-use fedimint_client::{Client, ClientHandle, ModuleKind, secret::RootSecretStrategy};
+use fedimint_client::{Client, ClientHandle, ModuleKind, OperationId, secret::RootSecretStrategy};
 use fedimint_core::{
     Amount, config::FederationId, db::Database, invite_code::InviteCode, util::SafeUrl,
 };
@@ -340,6 +341,7 @@ impl Wallet {
         WalletView { federations }
     }
 
+    // TODO: Return a strongly typed result.
     pub async fn receive_payment(
         &self,
         federation_id: FederationId,
@@ -348,10 +350,7 @@ impl Wallet {
         expiry_secs: u32,
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
-    ) -> anyhow::Result<(
-        Bolt11Invoice,
-        oneshot::Receiver<FinalRemoteReceiveOperationState>,
-    )> {
+    ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
         let client = self
             .clients
             .get(&federation_id)
@@ -359,39 +358,27 @@ impl Wallet {
 
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
-        let (invoice, operation_id) = lightning_module
+        Ok(lightning_module
             .remote_receive(claimer_pk, amount, expiry_secs, description, gateway)
-            .await?;
+            .await?)
+    }
 
-        let (payment_completion_sender, payment_completion_receiver) = oneshot::channel();
-
-        let clients = self.clients.clone();
-        tokio::spawn(async move {
-            // In the unlikely event that the client is removed between the spawning of
-            // this task and the retrieval of the client here, `payment_completion_sender`
-            // will be dropped, and the payment completion will not be sent.
-            if let Some(client) = clients.get(&federation_id) {
+    pub async fn await_receive_payment_final_state(
+        &self,
+        operation_id: OperationId,
+    ) -> anyhow::Result<FinalRemoteReceiveOperationState> {
+        for client in self.clients.iter() {
+            if client.operation_exists(operation_id).await {
                 let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
-                let _ = payment_completion_sender.send(
-                    lightning_module
-                        .await_remote_receive(operation_id)
-                        .await
-                        .unwrap(),
-                );
-            } else {
-                // TODO: Log an error here, since `Wallet::leave_federation`
-                // should never succeed if there are funds in-flight, thus
-                // preventing the client from disappearing between the spawning
-                // of this task and the retrieval of the client within it.
-                // Also we should add a devimint test which calls
-                // `receive_payment` and then attempts to leave the federation.
-                // Once this is done, modify/remove the comment above, just
-                // before the `if` block.
+                return lightning_module.await_remote_receive(operation_id).await;
             }
-        });
+        }
 
-        Ok((invoice, payment_completion_receiver))
+        Err(anyhow::anyhow!(
+            "Client not found containing operation id {}",
+            operation_id.0.to_upper_hex_string()
+        ))
     }
 
     pub async fn get_local_balance(&self) -> Amount {

@@ -4,6 +4,7 @@ use crate::fedimint_wallet::Wallet;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::MachineProtocol;
 use bitcoin::Network;
+use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
@@ -103,10 +104,7 @@ impl Machine {
         expiry_secs: u32,
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
-    ) -> anyhow::Result<(
-        Bolt11Invoice,
-        oneshot::Receiver<FinalRemoteReceiveOperationState>,
-    )> {
+    ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
         let Some(machine_config) = self.iroh_protocol.get_machine_config().await? else {
             return Err(anyhow::anyhow!(
                 "Machine cannot accept payments as it is not configured"
@@ -122,6 +120,15 @@ impl Machine {
                 description,
                 gateway,
             )
+            .await
+    }
+
+    pub async fn await_receive_payment_final_state(
+        &self,
+        operation_id: OperationId,
+    ) -> anyhow::Result<FinalRemoteReceiveOperationState> {
+        self.wallet
+            .await_receive_payment_final_state(operation_id)
             .await
     }
 
