@@ -15,7 +15,6 @@ anyhow = { workspace = true }
 bincode = { workspace = true }
 bip39 = { workspace = true }
 bitcoin = { workspace = true }
-dashmap = { workspace = true }
 fedimint-api-client = { workspace = true }
 fedimint-bip39 = { workspace = true }
 fedimint-client = { workspace = true }

@@ -5,6 +5,8 @@ use fedimint_core::{Amount, invite_code::InviteCode};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
 
+// TODO: Split up code better so we don't need this clippy rule exemption.
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     devimint::run_devfed_test()
@@ -65,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
                 federation_invite_code,
                 claimer_pk: manager
                     .get_fedimint_lnv2_claim_pubkey(fed.calculate_federation_id().parse()?)
+                    .await
                     .unwrap(),
             };
 

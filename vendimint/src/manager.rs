@@ -110,8 +110,11 @@ impl Manager {
         self.wallet.join_federation(invite_code).await
     }
 
-    pub fn get_fedimint_lnv2_claim_pubkey(&self, federation_id: FederationId) -> Option<PublicKey> {
-        self.wallet.get_lnv2_claim_pubkey(federation_id)
+    pub async fn get_fedimint_lnv2_claim_pubkey(
+        &self,
+        federation_id: FederationId,
+    ) -> Option<PublicKey> {
+        self.wallet.get_lnv2_claim_pubkey(federation_id).await
     }
 
     pub async fn get_local_balance(&self) -> Amount {
