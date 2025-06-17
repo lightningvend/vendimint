@@ -2133,7 +2133,7 @@ dependencies = [
  "esplora-client 0.10.0",
  "fedimint-api-client",
  "fedimint-bitcoind",
- "fedimint-build 0.7.2",
+ "fedimint-build",
  "fedimint-client",
  "fedimint-client-module",
  "fedimint-core",
@@ -2723,19 +2723,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fedimint-build"
-version = "0.8.0-alpha"
-source = "git+https://github.com/fedimint/fedimint#c89cd026d51fc60e24ff2cc019b9c4cdbb80f8c7"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "fedimint-cli"
 version = "0.0.2"
 dependencies = [
  "anyhow",
- "fedimint-build 0.8.0-alpha",
+ "fedimint-build",
  "fedimint-cli 0.7.2",
  "fedimint-core",
  "tokio",
@@ -2755,7 +2747,7 @@ dependencies = [
  "fedimint-aead",
  "fedimint-api-client",
  "fedimint-bip39",
- "fedimint-build 0.7.2",
+ "fedimint-build",
  "fedimint-client",
  "fedimint-core",
  "fedimint-eventlog",
@@ -2793,7 +2785,7 @@ dependencies = [
  "bitcoin",
  "fedimint-aead",
  "fedimint-api-client",
- "fedimint-build 0.7.2",
+ "fedimint-build",
  "fedimint-client-module",
  "fedimint-core",
  "fedimint-derive-secret",
@@ -2822,7 +2814,7 @@ dependencies = [
  "async-trait",
  "bitcoin",
  "fedimint-api-client",
- "fedimint-build 0.7.2",
+ "fedimint-build",
  "fedimint-core",
  "fedimint-derive-secret",
  "fedimint-eventlog",
@@ -3408,7 +3400,7 @@ dependencies = [
  "fedimint-aleph-bft",
  "fedimint-api-client",
  "fedimint-bitcoind",
- "fedimint-build 0.7.2",
+ "fedimint-build",
  "fedimint-core",
  "fedimint-logging",
  "fedimint-metrics",
@@ -3741,7 +3733,7 @@ name = "fedimintd"
 version = "0.0.2"
 dependencies = [
  "anyhow",
- "fedimint-build 0.8.0-alpha",
+ "fedimint-build",
  "fedimint-core",
  "fedimintd 0.7.2",
  "tokio",
@@ -3756,7 +3748,7 @@ dependencies = [
  "anyhow",
  "bitcoin",
  "clap",
- "fedimint-build 0.7.2",
+ "fedimint-build",
  "fedimint-core",
  "fedimint-ln-common",
  "fedimint-ln-server",
