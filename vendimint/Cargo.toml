@@ -5,6 +5,8 @@ license = "MIT"
 publish = true
 authors = { workspace = true }
 edition = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
 version = { workspace = true }
 
 [lints]
