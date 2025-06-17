@@ -92,6 +92,10 @@ impl Machine {
         self.iroh_protocol.node_addr().await
     }
 
+    pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
+        self.iroh_protocol.get_machine_config().await
+    }
+
     pub async fn await_next_incoming_claim_request(
         &self,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
