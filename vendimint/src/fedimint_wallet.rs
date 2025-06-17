@@ -1,5 +1,10 @@
 use std::{
-    collections::BTreeMap, fmt::Display, path::PathBuf, str::FromStr, sync::Arc, time::Duration,
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
 };
 
 use bip39::Mnemonic;
@@ -9,7 +14,6 @@ use bitcoin::{
     hex::DisplayHex,
     secp256k1::{PublicKey, Secp256k1},
 };
-use dashmap::DashMap;
 use fedimint_api_client::api::net::Connector;
 use fedimint_bip39::Bip39RootSecretStrategy;
 use fedimint_client::{Client, ClientHandle, ModuleKind, OperationId, secret::RootSecretStrategy};
@@ -28,7 +32,7 @@ use fedimint_mint_client::{
 use fedimint_rocksdb::RocksDb;
 use lightning_invoice::Bolt11Invoice;
 use serde::Serialize;
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, mpsc, oneshot, watch};
 
 const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -93,7 +97,7 @@ fn format_amount(amount: Amount) -> String {
 
 pub struct Wallet {
     derivable_secret: DerivableSecret,
-    clients: Arc<DashMap<FederationId, ClientHandle>>,
+    clients: Arc<RwLock<HashMap<FederationId, ClientHandle>>>,
     fedimint_clients_data_dir: Mutex<PathBuf>,
     view_update_receiver: watch::Receiver<WalletView>,
     // Used to tell `Self.view_update_task` to immediately update the view.
@@ -122,7 +126,7 @@ impl Wallet {
         let (force_update_view_sender, mut force_update_view_receiver) =
             mpsc::channel::<oneshot::Sender<()>>(100);
 
-        let clients = Arc::new(DashMap::new());
+        let clients = Arc::new(RwLock::new(HashMap::new()));
 
         let clients_clone = clients.clone();
         let view_update_task = tokio::spawn(async move {
@@ -140,7 +144,7 @@ impl Wallet {
                     () = tokio::time::sleep(WALLET_VIEW_UPDATE_INTERVAL) => None,
                 };
 
-                let current_state = Self::get_current_state(clients_clone.clone()).await;
+                let current_state = Self::get_current_state(&clients_clone.read().await).await;
 
                 // Ignoring clippy lint here since the `match` provides better clarity.
                 #[allow(clippy::option_if_let_else)]
@@ -200,14 +204,25 @@ impl Wallet {
     /// This ensures any streams opened by `get_update_stream`  have yielded the
     /// latest view. This function should be called at the end of any function
     /// that modifies the view.
-    async fn force_update_view(&self) {
+    async fn force_update_view(
+        &self,
+        clients: RwLockWriteGuard<'_, HashMap<FederationId, ClientHandle>>,
+    ) {
+        // While this function doesn't need to take the `clients` argument, it
+        // does so to make it clear that any calling function must not hold a
+        // write lock when calling this function. This is to prevent deadlocks,
+        // since the task that responds to the channel here requires a read lock
+        // on the clients map.
+        drop(clients);
         let (sender, receiver) = oneshot::channel();
         let _ = self.force_update_view_sender.send(sender).await;
         let _ = receiver.await;
     }
 
-    pub fn get_lnv2_claim_pubkey(&self, federation_id: FederationId) -> Option<PublicKey> {
-        let client = self.clients.get(&federation_id)?;
+    pub async fn get_lnv2_claim_pubkey(&self, federation_id: FederationId) -> Option<PublicKey> {
+        let clients = self.clients.read().await;
+
+        let client = clients.get(&federation_id)?;
 
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
@@ -230,9 +245,11 @@ impl Wallet {
             })
             .collect::<Vec<FederationId>>();
 
+        let mut clients = self.clients.write().await;
+
         for federation_id in federation_ids {
             // Skip if we're already connected to this federation.
-            if self.clients.contains_key(&federation_id) {
+            if clients.contains_key(&federation_id) {
                 continue;
             }
 
@@ -245,10 +262,10 @@ impl Wallet {
                 .build_client_from_federation_id(federation_id, db)
                 .await?;
 
-            self.clients.insert(federation_id, client);
+            clients.insert(federation_id, client);
         }
 
-        self.force_update_view().await;
+        self.force_update_view(clients).await;
 
         Ok(())
     }
@@ -269,9 +286,11 @@ impl Wallet {
 
         let client = self.build_client_from_invite_code(invite_code, db).await?;
 
-        self.clients.insert(federation_id, client);
+        let mut clients = self.clients.write().await;
 
-        self.force_update_view().await;
+        clients.insert(federation_id, client);
+
+        self.force_update_view(clients).await;
 
         Ok(())
     }
@@ -283,10 +302,12 @@ impl Wallet {
     // TODO: Use this method or remove it.
     #[allow(dead_code)]
     pub async fn leave_federation(&self, federation_id: FederationId) -> anyhow::Result<()> {
-        if let Some((_, client)) = self.clients.remove(&federation_id) {
+        let mut clients = self.clients.write().await;
+
+        if let Some(client) = clients.remove(&federation_id) {
             if client.get_balance().await.msats != 0 {
                 // Re-insert the client back into the clients map.
-                self.clients.insert(federation_id, client);
+                clients.insert(federation_id, client);
 
                 return Err(anyhow::anyhow!(
                     "Cannot leave federation with non-zero balance: {}",
@@ -305,7 +326,7 @@ impl Wallet {
             }
         }
 
-        self.force_update_view().await;
+        self.force_update_view(clients).await;
 
         Ok(())
     }
@@ -316,13 +337,12 @@ impl Wallet {
     /// when the view is changed, with the guarantee that
     /// the view hasn't been updated elsewhere in a way that
     /// could de-sync the view.
-    async fn get_current_state(clients: Arc<DashMap<FederationId, ClientHandle>>) -> WalletView {
+    async fn get_current_state(
+        clients: &RwLockReadGuard<'_, HashMap<FederationId, ClientHandle>>,
+    ) -> WalletView {
         let mut federations = BTreeMap::new();
 
-        for entry in clients.iter() {
-            let federation_id = entry.key();
-            let client = entry.value();
-
+        for (federation_id, client) in clients.iter() {
             federations.insert(
                 *federation_id,
                 FederationView {
@@ -351,8 +371,9 @@ impl Wallet {
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
     ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
-        let client = self
-            .clients
+        let clients = self.clients.read().await;
+
+        let client = clients
             .get(&federation_id)
             .ok_or_else(|| anyhow::anyhow!("Client for federation {} not found", federation_id))?;
 
@@ -367,7 +388,9 @@ impl Wallet {
         &self,
         operation_id: OperationId,
     ) -> anyhow::Result<FinalRemoteReceiveOperationState> {
-        for client in self.clients.iter() {
+        let clients = self.clients.read().await;
+
+        for client in clients.values() {
             if client.operation_exists(operation_id).await {
                 let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
@@ -383,7 +406,10 @@ impl Wallet {
 
     pub async fn get_local_balance(&self) -> Amount {
         let mut balance = Amount::ZERO;
-        for client in self.clients.iter() {
+
+        let clients = self.clients.read().await;
+
+        for client in clients.values() {
             balance += client.get_balance().await;
         }
         balance
@@ -396,8 +422,9 @@ impl Wallet {
         include_invite: bool,
         extra_meta: M,
     ) -> anyhow::Result<Option<OOBNotes>> {
-        let client = self
-            .clients
+        let clients = self.clients.read().await;
+
+        let client = clients
             .get(&federation_id)
             .ok_or_else(|| anyhow::anyhow!("Client for federation {} not found", federation_id))?;
 
@@ -445,7 +472,9 @@ impl Wallet {
         claimer_pk: PublicKey,
         limit_or: Option<usize>,
     ) -> Option<Vec<ClaimableContract>> {
-        let client = self.clients.get(&federation_id)?;
+        let clients = self.clients.read().await;
+
+        let client = clients.get(&federation_id)?;
 
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
@@ -461,7 +490,9 @@ impl Wallet {
         federation_id: FederationId,
         contract_ids: Vec<ContractId>,
     ) {
-        let Some(client) = self.clients.get(&federation_id) else {
+        let clients = self.clients.read().await;
+
+        let Some(client) = clients.get(&federation_id) else {
             return;
         };
 
@@ -477,7 +508,9 @@ impl Wallet {
         federation_id: FederationId,
         claimable_contract: ClaimableContract,
     ) -> anyhow::Result<()> {
-        let Some(client) = self.clients.get(&federation_id) else {
+        let clients = self.clients.read().await;
+
+        let Some(client) = clients.get(&federation_id) else {
             return Err(anyhow::anyhow!("Client not found"));
         };
 

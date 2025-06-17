@@ -10963,7 +10963,6 @@ dependencies = [
  "bincode 2.0.1",
  "bip39",
  "bitcoin",
- "dashmap",
  "fedimint-api-client",
  "fedimint-bip39",
  "fedimint-client",
