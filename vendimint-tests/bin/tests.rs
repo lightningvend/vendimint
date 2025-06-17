@@ -80,6 +80,8 @@ async fn main() -> anyhow::Result<()> {
             // TODO: Wait more intelligently.
             tokio::time::sleep(Duration::from_secs(5)).await;
 
+            assert_eq!(machine.get_machine_config().await?, Some(machine_config));
+
             tracing::info!("Machine generating invoice...");
             let (invoice, operation_id) = machine
                 .receive_payment(
