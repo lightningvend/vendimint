@@ -26,6 +26,7 @@ devimint = "0.7.2"
 fedimintd = "0.7.2"
 fedimint-api-client = { version = "0.7.2", features = ["tor"] }
 fedimint-bip39 = "0.7.2"
+fedimint-build = "0.7.2"
 fedimint-cli = "0.7.2"
 fedimint-client = "0.7.2"
 fedimint-core = "0.7.2"
