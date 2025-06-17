@@ -48,11 +48,13 @@ impl ManagerProtocol {
         Ok(manager_protocol)
     }
 
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.router.shutdown().await?;
+    pub async fn shutdown(&self) {
+        self.router
+            .shutdown()
+            .await
+            .expect("No `ProtocolHandler` should ever panic");
         self.blobs.shutdown().await;
         self.docs.shutdown().await;
-        Ok(())
     }
 
     #[must_use]

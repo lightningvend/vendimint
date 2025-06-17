@@ -141,11 +141,13 @@ impl MachineProtocol {
         })
     }
 
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.router.shutdown().await?;
+    pub async fn shutdown(&self) {
+        self.router
+            .shutdown()
+            .await
+            .expect("No `ProtocolHandler` should ever panic");
         self.blobs.shutdown().await;
         self.docs.shutdown().await;
-        Ok(())
     }
 
     #[must_use]
@@ -260,7 +262,7 @@ mod tests {
         let node_addr = machine_protocol.node_addr().await?;
 
         // Shutdown and restart to test basic persistence.
-        machine_protocol.shutdown().await?;
+        machine_protocol.shutdown().await;
         drop(machine_protocol);
 
         let machine_protocol = MachineProtocol::new(storage_path.path()).await?;

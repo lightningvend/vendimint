@@ -135,8 +135,16 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Extracted manager ecash balance: {}", ecash.total_amount());
 
             tracing::info!("Shutting down machine and manager...");
-            machine.shutdown().await?;
-            manager.shutdown().await?;
+            machine.shutdown().await;
+            assert!(machine.is_shutdown());
+            manager.shutdown().await;
+            assert!(manager.is_shutdown());
+
+            // Ensure shutdown commands are idempotent.
+            machine.shutdown().await;
+            assert!(machine.is_shutdown());
+            manager.shutdown().await;
+            assert!(manager.is_shutdown());
 
             tracing::info!("Successfully completed devimint test!");
 

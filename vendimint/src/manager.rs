@@ -59,15 +59,15 @@ impl Manager {
         })
     }
 
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.iroh_protocol.shutdown().await?;
+    /// Shuts down the manager idempotently.
+    pub async fn shutdown(&self) {
+        self.iroh_protocol.shutdown().await;
 
         // This task is safe to abort. See the property's documentation for why this is the case.
         self.syncer_task_handle.abort();
-
-        Ok(())
     }
 
+    // Checks if the manager is already shutdown.
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_finished()
