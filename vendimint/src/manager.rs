@@ -28,6 +28,17 @@ pub struct Manager {
 }
 
 impl Manager {
+    /// Create a new manager instance.
+    ///
+    /// The storage path provided should not contain any data
+    /// other than that which was written by the manager. It
+    /// also should not have more than one manager interacting
+    /// with files in the storage path concurrently. Both of
+    /// these cases are undefined behavior.
+    ///
+    /// For a given storage path, switching between different
+    /// networks is safe. Data is partitioned by network, so
+    /// each network has its own isolated storage.
     pub async fn new(storage_path: &Path, network: Network) -> anyhow::Result<Self> {
         let network_partitioned_storage_path = storage_path.join(network.to_string());
 
