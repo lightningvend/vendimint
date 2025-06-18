@@ -19,11 +19,11 @@ pub struct Machine {
     iroh_protocol: Arc<MachineProtocol>,
     wallet: Arc<Wallet>,
 
-    /// Task which moves claimable payments from `Self.wallet` to `Self.machine_protocol`.
+    /// Task which moves claimable payments from `Self.wallet` to `Self.iroh_protocol`.
     /// This is safe to cancel/abort at any time, since it copies payments over to the new
     /// location before deleting them from the old location, and all write operations are
-    /// idempotent.
-    syncer_task_handle: tokio::task::JoinHandle<()>,
+    /// idempotent. Is `None` after `Self::shutdown` has been called, otherwise is `Some`.
+    syncer_task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Machine {
@@ -70,22 +70,29 @@ impl Machine {
         Ok(Self {
             iroh_protocol,
             wallet,
-            syncer_task_handle,
+            syncer_task_handle: Some(syncer_task_handle),
         })
     }
 
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
+    /// Shuts down the machine idempotently.
+    ///
+    /// After awaiting this, [`Self::is_shutdown`] will return `true`.
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         self.iroh_protocol.shutdown().await?;
 
         // This task is safe to abort. See the property's documentation for why this is the case.
-        self.syncer_task_handle.abort();
+        if let Some(syncer_task_handle) = self.syncer_task_handle.take() {
+            syncer_task_handle.abort();
+            let _ = syncer_task_handle.await;
+        }
 
         Ok(())
     }
 
+    /// Checks if the machine is already shutdown.
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
-        self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_finished()
+        self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
     }
 
     pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
