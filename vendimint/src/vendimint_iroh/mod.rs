@@ -254,7 +254,7 @@ mod tests {
         Ok(())
     }
 
-    // If the manager decides not to claim the machine (sends `false`), the
+    // If the manager decides not to claim the machine by sending `false`, the
     // machine will still consider itself claimed by that manager, preventing
     // subsequent claims by others.
     #[tokio::test]

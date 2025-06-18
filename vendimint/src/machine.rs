@@ -27,6 +27,17 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// Create a new machine instance.
+    ///
+    /// The storage path provided should not contain any data
+    /// other than that which was written by the machine. It
+    /// also should not have more than one machine interacting
+    /// with files in the storage path concurrently. Both of
+    /// these cases are undefined behavior.
+    ///
+    /// For a given storage path, switching between different
+    /// networks is safe. Data is partitioned by network, so
+    /// each network has its own isolated storage.
     pub async fn new(storage_path: &Path, network: Network) -> anyhow::Result<Self> {
         let network_partitioned_storage_path = storage_path.join(network.to_string());
 
@@ -95,10 +106,15 @@ impl Machine {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
     }
 
+    /// Gets the network address of the machine, which
+    /// can be exchanged out-of-band and passed into
+    /// [`crate::Manager::claim_machine`].
     pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
         self.iroh_protocol.node_addr().await
     }
 
+    /// Gets the machine's configuration, as set
+    /// by [`crate::Manager::set_machine_config`].
     pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
         self.iroh_protocol.get_machine_config().await
     }
