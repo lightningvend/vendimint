@@ -27,12 +27,12 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::info!("Starting vendimint machine...");
             let machine_storage_path = tempfile::tempdir()?;
-            let machine =
+            let mut machine =
                 vendimint::Machine::new(machine_storage_path.path(), Network::Regtest).await?;
 
             tracing::info!("Starting vendimint manager...");
             let manager_storage_path = tempfile::tempdir()?;
-            let manager =
+            let mut manager =
                 vendimint::Manager::new(manager_storage_path.path(), Network::Regtest).await?;
 
             tracing::info!("Claiming machine from manager...");
@@ -135,8 +135,18 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Extracted manager ecash balance: {}", ecash.total_amount());
 
             tracing::info!("Shutting down machine and manager...");
+            assert!(!machine.is_shutdown());
             machine.shutdown().await?;
+            assert!(machine.is_shutdown());
+            assert!(!manager.is_shutdown());
             manager.shutdown().await?;
+            assert!(manager.is_shutdown());
+
+            // Ensure shutdown commands are idempotent.
+            machine.shutdown().await?;
+            assert!(machine.is_shutdown());
+            manager.shutdown().await?;
+            assert!(manager.is_shutdown());
 
             tracing::info!("Successfully completed devimint test!");
 
