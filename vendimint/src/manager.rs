@@ -163,11 +163,20 @@ impl Manager {
         // 2. Sweep the payments to the wallet.
         let mut claimed_contracts = Vec::new();
         for (machine_id, federation_id, claimable_contract) in claimable_contracts {
-            if wallet
+            if let Err(err) = wallet
                 .claim_contract(federation_id, claimable_contract.clone())
                 .await
-                .is_ok()
             {
+                // TODO: Should we add a dead-letter queue for failed
+                // contracts and also remove them from the iroh doc?
+                tracing::error!(
+                    "Failed to claim contract for machine {machine_id} and federation {federation_id}\n\nError:\n{err}\n\nContract:\n{claimable_contract:#?}"
+                );
+            } else {
+                // TODO: Test that contracts get removed from the iroh doc.
+                // Maybe add test functionality to `Manager` and `Machine`
+                // to get a full dump of the iroh doc from both sides, then
+                // assert that they're equal, then verify the contents.
                 claimed_contracts.push((machine_id, federation_id, claimable_contract));
             }
         }
