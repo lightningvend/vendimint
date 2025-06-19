@@ -12,7 +12,10 @@ use iroh_docs::{
     protocol::Docs,
     store::{QueryBuilder, SingleLatestPerKeyQuery},
 };
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 use tokio::{io::AsyncWriteExt, sync::oneshot};
 use uuid::Uuid;
 
@@ -253,13 +256,23 @@ impl ManagerProtocol {
 
     pub async fn remove_claimable_contracts(
         &self,
-        // TODO: Change to a `HashMap<Uuid, (FederationId, ClaimableContract)>`
-        // so we don't have to re-fetch the machine doc for every contract.
         claimable_contracts: Vec<(Uuid, FederationId, ClaimableContract)>,
     ) -> anyhow::Result<()> {
         let author_id = self.docs.client().authors().default().await?;
 
-        for (machine_id, federation_id, claimable_contract) in claimable_contracts {
+        // Fold contracts to be mapped by machine
+        // id so we can load each machine doc once.
+        let claimable_contracts_by_machine_id: HashMap<
+            Uuid,
+            Vec<(FederationId, ClaimableContract)>,
+        > = claimable_contracts
+            .into_iter()
+            .fold(HashMap::new(), |mut acc, (a, b, c)| {
+                acc.entry(a).or_default().push((b, c));
+                acc
+            });
+
+        for (machine_id, contracts) in claimable_contracts_by_machine_id {
             let machine_doc_ticket = self.get_machine(&machine_id)?;
             let machine_doc = self
                 .docs
@@ -268,12 +281,14 @@ impl ManagerProtocol {
                 .await?
                 .unwrap();
 
-            let key = SharedProtocol::create_claimable_contract_machine_doc_key(
-                &federation_id,
-                &claimable_contract,
-            );
+            for (federation_id, claimable_contract) in contracts {
+                let key = SharedProtocol::create_claimable_contract_machine_doc_key(
+                    &federation_id,
+                    &claimable_contract,
+                );
 
-            machine_doc.del(author_id, key).await?;
+                machine_doc.del(author_id, key).await?;
+            }
         }
 
         Ok(())
