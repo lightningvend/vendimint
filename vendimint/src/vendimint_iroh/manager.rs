@@ -3,7 +3,7 @@ use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
 
 use iroh::{
-    NodeAddr,
+    NodeAddr, NodeId,
     protocol::{ProtocolHandler, Router},
 };
 use iroh_blobs::net_protocol::Blobs;
@@ -15,9 +15,9 @@ use iroh_docs::{
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 use tokio::{io::AsyncWriteExt, sync::oneshot};
-use uuid::Uuid;
 
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
@@ -69,6 +69,8 @@ impl ManagerProtocol {
         &self,
         node_addr: NodeAddr,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
+        let machine_id = node_addr.node_id;
+
         let conn = self
             .router
             .endpoint()
@@ -98,7 +100,6 @@ impl ManagerProtocol {
                         {
                             if matches!(machine_doc_ticket.capability, Capability::Write(_)) {
                                 let _ = docs.client().import(machine_doc_ticket.clone()).await;
-                                let machine_id = Uuid::new_v4();
                                 let _ = std::fs::write(
                                     machine_doc_ticket_path.join(machine_id.to_string()),
                                     serde_json::to_string(&machine_doc_ticket).unwrap(),
@@ -118,7 +119,7 @@ impl ManagerProtocol {
         Ok((pin, tx))
     }
 
-    pub fn get_machine(&self, machine_id: &Uuid) -> anyhow::Result<DocTicket> {
+    pub fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
         let machine_doc_ticket_path = self
             .get_machine_doc_ticket_path()
             .join(machine_id.to_string());
@@ -127,7 +128,7 @@ impl ManagerProtocol {
         Ok(machine_doc_ticket)
     }
 
-    pub fn list_machines(&self) -> anyhow::Result<Vec<(Uuid, DocTicket)>> {
+    pub fn list_machines(&self) -> anyhow::Result<Vec<(NodeId, DocTicket)>> {
         let machine_doc_tickets_path = self.get_machine_doc_ticket_path();
         let mut machines = Vec::new();
 
@@ -135,7 +136,7 @@ impl ManagerProtocol {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let file_name = entry.file_name().into_string().unwrap();
-                let machine_id = Uuid::parse_str(&file_name).unwrap();
+                let machine_id = NodeId::from_str(&file_name).unwrap();
                 let machine_doc_ticket_str = std::fs::read_to_string(entry.path())?;
                 let machine_doc_ticket: DocTicket =
                     serde_json::from_str(&machine_doc_ticket_str).unwrap();
@@ -148,7 +149,7 @@ impl ManagerProtocol {
 
     pub async fn get_machine_config(
         &self,
-        machine_id: &Uuid,
+        machine_id: &NodeId,
     ) -> anyhow::Result<Option<MachineConfig>> {
         let machine_doc_ticket = self.get_machine(machine_id)?;
         let machine_doc = self
@@ -179,7 +180,7 @@ impl ManagerProtocol {
 
     pub async fn set_machine_config(
         &self,
-        machine_id: &Uuid,
+        machine_id: &NodeId,
         machine_config: &MachineConfig,
     ) -> anyhow::Result<()> {
         let machine_doc_ticket = self.get_machine(machine_id)?;
@@ -201,7 +202,7 @@ impl ManagerProtocol {
 
     pub async fn get_claimable_contracts(
         &self,
-    ) -> anyhow::Result<Vec<(Uuid, FederationId, ClaimableContract)>> {
+    ) -> anyhow::Result<Vec<(NodeId, FederationId, ClaimableContract)>> {
         let mut payments = Vec::new();
 
         for (machine_id, machine_doc_ticket) in self.list_machines()? {
@@ -256,14 +257,14 @@ impl ManagerProtocol {
 
     pub async fn remove_claimable_contracts(
         &self,
-        claimable_contracts: Vec<(Uuid, FederationId, ClaimableContract)>,
+        claimable_contracts: Vec<(NodeId, FederationId, ClaimableContract)>,
     ) -> anyhow::Result<()> {
         let author_id = self.docs.client().authors().default().await?;
 
         // Fold contracts to be mapped by machine
         // id so we can load each machine doc once.
         let claimable_contracts_by_machine_id: HashMap<
-            Uuid,
+            NodeId,
             Vec<(FederationId, ClaimableContract)>,
         > = claimable_contracts
             .into_iter()

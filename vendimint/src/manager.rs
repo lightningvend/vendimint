@@ -8,10 +8,9 @@ use bitcoin::secp256k1::PublicKey;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
-use iroh::NodeAddr;
+use iroh::{NodeAddr, NodeId};
 use serde::Serialize;
 use tokio::sync::oneshot;
-use uuid::Uuid;
 
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
@@ -98,7 +97,7 @@ impl Manager {
         self.iroh_protocol.claim_machine(node_addr).await
     }
 
-    pub fn list_machine_ids(&self) -> anyhow::Result<Vec<Uuid>> {
+    pub fn list_machine_ids(&self) -> anyhow::Result<Vec<NodeId>> {
         Ok(self
             .iroh_protocol
             .list_machines()?
@@ -109,14 +108,14 @@ impl Manager {
 
     pub async fn get_machine_config(
         &self,
-        machine_id: &Uuid,
+        machine_id: &NodeId,
     ) -> anyhow::Result<Option<MachineConfig>> {
         self.iroh_protocol.get_machine_config(machine_id).await
     }
 
     pub async fn set_machine_config(
         &self,
-        machine_id: &Uuid,
+        machine_id: &NodeId,
         machine_config: &MachineConfig,
     ) -> anyhow::Result<()> {
         self.iroh_protocol
