@@ -19,6 +19,8 @@ mod tests {
     use fedimint_lnv2_remote_client::ClaimableContract;
     use tpe::{AggregatePublicKey, G1Affine};
 
+    const IROH_WAIT_DELAY: Duration = Duration::from_millis(100);
+
     // TODO: Cleanup this test, and also test the protocols more thoroughly.
     #[tokio::test]
     async fn test_protocols() -> anyhow::Result<()> {
@@ -55,9 +57,12 @@ mod tests {
             if manager_protocol.list_machines().unwrap().len() == 1 {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(IROH_WAIT_DELAY).await;
         }
 
+        // TODO: Throughout all tests in this file, replace assertions
+        // of format `assert!(foo.is_some());` with `assert_eq!(foo, Some(bar));`.
+        assert!(machine_protocol.get_manager_pubkey().await.is_some());
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         assert_eq!(machine_protocol.get_machine_config().await?, None);
@@ -75,17 +80,11 @@ mod tests {
             .await?;
 
         // Wait for the machine protocol to receive the invite code.
-        for i in 0..10 {
+        for _ in 0..10 {
             if let Ok(Some(_)) = machine_protocol.get_machine_config().await {
                 break;
             }
-
-            assert!(
-                i != 9,
-                "Timeout waiting for federation invite code to be set"
-            );
-
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(IROH_WAIT_DELAY).await;
         }
 
         assert_eq!(
@@ -117,15 +116,12 @@ mod tests {
             .write_payment_to_machine_doc(&dummy_federation_id, &dummy_claimable_contract)
             .await?;
 
-        // Wait for the machine protocol to receive the invite code.
-        for i in 0..10 {
+        // Wait for the manager protocol to sync the claimable contracts.
+        for _ in 0..10 {
             if manager_protocol.get_claimable_contracts().await.is_ok() {
                 break;
             }
-
-            assert!(i != 9, "Timeout waiting for claimable contracts to be set");
-
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(IROH_WAIT_DELAY).await;
         }
 
         let claimable_contracts = manager_protocol.get_claimable_contracts().await?;
@@ -183,8 +179,9 @@ mod tests {
             if manager1_protocol.list_machines().unwrap().len() == 1 {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(IROH_WAIT_DELAY).await;
         }
+        assert!(machine_protocol.get_manager_pubkey().await.is_some());
         assert_eq!(manager1_protocol.list_machines()?.len(), 1);
 
         // Second manager attempts to claim
@@ -192,8 +189,9 @@ mod tests {
         let (_pin_mgr2, tx_mgr2) = manager2_protocol.claim_machine(machine_addr2).await?;
         tx_mgr2.send(true).unwrap();
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(IROH_WAIT_DELAY).await;
 
+        assert!(machine_protocol.get_manager_pubkey().await.is_some());
         assert_eq!(manager2_protocol.list_machines()?.len(), 0);
 
         Ok(())
@@ -228,8 +226,9 @@ mod tests {
             tokio::try_join!(manager_task, machine_task)?;
         let _ = pin_mgr;
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(IROH_WAIT_DELAY).await;
 
+        assert_eq!(machine_protocol.get_manager_pubkey().await, None);
         assert_eq!(manager_protocol.list_machines()?.len(), 0);
 
         // After rejection, another claim should be possible
@@ -269,17 +268,12 @@ mod tests {
         let manager2_protocol = ManagerProtocol::new(manager2_storage_path.path()).await?;
 
         let machine_addr = machine_protocol.node_addr().await?;
-
-        let manager_task = tokio::spawn({
-            let machine_addr = machine_addr.clone();
-            async move {
-                let (pin_mgr, tx_mgr) =
-                    manager1_protocol.claim_machine(machine_addr).await.unwrap();
-                tx_mgr.send(false).unwrap();
-                (pin_mgr, manager1_protocol)
-            }
+        let manager1_task = tokio::spawn(async move {
+            let (pin_mgr, tx_mgr) = manager1_protocol.claim_machine(machine_addr).await.unwrap();
+            tx_mgr.send(false).unwrap();
+            (pin_mgr, manager1_protocol)
         });
-        let machine_task = tokio::spawn(async move {
+        let machine_task_1 = tokio::spawn(async move {
             let (pin_machine, tx_machine) = machine_protocol
                 .await_next_incoming_claim_request()
                 .await
@@ -287,19 +281,38 @@ mod tests {
             tx_machine.send(true).unwrap();
             (pin_machine, machine_protocol)
         });
-        let ((_pin_mgr, _manager1_protocol), (_pin_machine, machine_protocol)) =
-            tokio::try_join!(manager_task, machine_task)?;
+        let ((pin_mgr1, manager1_protocol), (pin_machine, machine_protocol)) =
+            tokio::try_join!(manager1_task, machine_task_1)?;
+        assert_eq!(pin_mgr1, pin_machine);
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(IROH_WAIT_DELAY).await;
 
-        // Second manager should not be able to claim now
+        assert_eq!(machine_protocol.get_manager_pubkey().await, None);
+        assert_eq!(manager1_protocol.list_machines()?.len(), 0);
+
+        // Second manager still be able to claim, since the first claim was aborted.
         let machine_addr = machine_protocol.node_addr().await?;
-        let (_pin2, tx2) = manager2_protocol.claim_machine(machine_addr).await?;
-        tx2.send(true).unwrap();
+        let manager2_task = tokio::spawn(async move {
+            let (pin_mgr, tx_mgr) = manager2_protocol.claim_machine(machine_addr).await.unwrap();
+            tx_mgr.send(true).unwrap();
+            (pin_mgr, manager2_protocol)
+        });
+        let machine_task_2 = tokio::spawn(async move {
+            let (pin_machine, tx_machine) = machine_protocol
+                .await_next_incoming_claim_request()
+                .await
+                .unwrap();
+            tx_machine.send(true).unwrap();
+            (pin_machine, machine_protocol)
+        });
+        let ((pin_mgr2, manager2_protocol), (pin_machine, machine_protocol)) =
+            tokio::try_join!(manager2_task, machine_task_2)?;
+        assert_eq!(pin_mgr2, pin_machine);
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(IROH_WAIT_DELAY).await;
 
-        assert_eq!(manager2_protocol.list_machines()?.len(), 0);
+        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(manager2_protocol.list_machines()?.len(), 1);
 
         Ok(())
     }
@@ -335,9 +348,10 @@ mod tests {
             if manager_protocol.list_machines().unwrap().len() == 1 {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(IROH_WAIT_DELAY).await;
         }
 
+        assert!(machine_protocol.get_manager_pubkey().await.is_some());
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         machine_protocol.shutdown().await?;
@@ -347,6 +361,7 @@ mod tests {
         let addr_after = machine_protocol.node_addr().await?;
 
         assert_eq!(addr_before.node_id, addr_after.node_id);
+        assert!(machine_protocol.get_manager_pubkey().await.is_some());
 
         Ok(())
     }

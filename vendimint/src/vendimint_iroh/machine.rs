@@ -28,6 +28,8 @@ use tokio::{
     sync::{Mutex, mpsc, oneshot},
 };
 
+use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
+
 use super::shared::{
     CLAIM_ALPN, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
@@ -41,6 +43,8 @@ pub struct MachineProtocol {
     docs: Docs<iroh_blobs::store::fs::Store>,
     app_storage_path: PathBuf,
     claim_request_receiver: Mutex<mpsc::Receiver<(u32, oneshot::Sender<bool>)>>,
+    #[cfg(test)]
+    claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +83,16 @@ impl ProtocolHandler for ClaimHandler {
                 .map_err(|_| anyhow::anyhow!("receiver dropped"))?;
 
             if rx.await.unwrap_or(false) {
+                let (mut send, mut recv) = connection.accept_bi().await?;
+
+                // Manager sends some magic bytes to indicate
+                // that it would like to claim this machine.
+                // Read n + 1 bytes to ensure the magic byte
+                // is the exact correct length, and no more.
+                if recv.read_to_end(PING_MAGIC_BYTES.len() + 1).await? != PING_MAGIC_BYTES {
+                    return Err(anyhow::anyhow!("Invalid manager stream open ping"));
+                }
+
                 let doc = get_or_create_machine_doc(&this.app_storage_path, &this.docs).await?;
                 let ticket = doc
                     .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
@@ -88,17 +102,15 @@ impl ProtocolHandler for ClaimHandler {
                     this.app_storage_path.join(MACHINE_MANAGER_PUBLIC_KEY_PATH);
                 let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey).unwrap();
                 std::fs::write(&manager_public_key_path, claimer_pubkey_str).unwrap();
+                *claimed_manager_pubkey_lock = Some(claimer_pubkey);
+                drop(claimed_manager_pubkey_lock);
 
-                let mut send = connection.open_uni().await?;
                 let ticket_bytes = serde_json::to_vec(&ticket)?;
                 send.write_all(&ticket_bytes).await?;
                 send.finish()?;
                 send.stopped().await?;
                 send.shutdown().await?;
                 connection.close(0u32.into(), b"finished");
-
-                *claimed_manager_pubkey_lock = Some(claimer_pubkey);
-                drop(claimed_manager_pubkey_lock);
             } else {
                 connection.close(0u32.into(), b"rejected");
             }
@@ -122,12 +134,15 @@ impl MachineProtocol {
                 Err(_) => None,
             };
 
+        let claimed_manager_pubkey = Arc::new(Mutex::new(manager_public_key_or));
+
         let (tx, rx) = mpsc::channel(1);
+
         let handler = ClaimHandler {
             docs: shared_protocol.docs.clone(),
             app_storage_path: shared_protocol.app_storage_path.clone(),
             claim_request_sender: tx,
-            claimed_manager_pubkey: Arc::new(Mutex::new(manager_public_key_or)),
+            claimed_manager_pubkey: claimed_manager_pubkey.clone(),
         };
 
         shared_protocol.router_builder = shared_protocol.router_builder.accept(CLAIM_ALPN, handler);
@@ -138,6 +153,8 @@ impl MachineProtocol {
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
             claim_request_receiver: Mutex::new(rx),
+            #[cfg(test)]
+            claimed_manager_pubkey,
         })
     }
 
@@ -207,6 +224,11 @@ impl MachineProtocol {
             .await?;
 
         Ok(Some(serde_json::from_slice(&bytes)?))
+    }
+
+    #[cfg(test)]
+    pub async fn get_manager_pubkey(&self) -> Option<PublicKey> {
+        *self.claimed_manager_pubkey.lock().await
     }
 
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data

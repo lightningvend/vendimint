@@ -13,8 +13,10 @@ use iroh_docs::{
     store::{QueryBuilder, SingleLatestPerKeyQuery},
 };
 use std::path::{Path, PathBuf};
-use tokio::sync::oneshot;
+use tokio::{io::AsyncWriteExt, sync::oneshot};
 use uuid::Uuid;
+
+use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
     CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol,
@@ -76,7 +78,18 @@ impl ManagerProtocol {
         let machine_doc_ticket_path = self.get_machine_doc_ticket_path();
         tokio::spawn(async move {
             if rx.await.unwrap_or(false) {
-                if let Ok(mut recv) = conn.accept_uni().await {
+                if let Ok((mut send, mut recv)) = conn.open_bi().await {
+                    // Send open ping magic byte.
+                    if send.write_all(&PING_MAGIC_BYTES).await.is_err() {
+                        return;
+                    }
+                    if send.finish().is_err() {
+                        return;
+                    }
+                    if send.stopped().await.is_err() {
+                        return;
+                    }
+
                     if let Ok(bytes) = recv.read_to_end(1024 * 1024).await {
                         if let Ok(machine_doc_ticket) = serde_json::from_slice::<DocTicket>(&bytes)
                         {
@@ -89,6 +102,10 @@ impl ManagerProtocol {
                                 );
                             }
                         }
+                    }
+
+                    if send.shutdown().await.is_err() {
+                        return;
                     }
                 }
             }

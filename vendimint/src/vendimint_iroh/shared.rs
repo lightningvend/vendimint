@@ -22,6 +22,10 @@ pub const MACHINE_CONFIG_KEY: [u8; 2] = [0x02, 0xFF];
 pub const CLAIM_ALPN: &[u8] = b"machine-claim/0";
 const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 
+/// Magic bytes sent from manager to machine to alert
+/// the machine that the manager would like to claim it.
+pub const PING_MAGIC_BYTES: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
+
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct MachineConfig {
     pub federation_invite_code: InviteCode,
