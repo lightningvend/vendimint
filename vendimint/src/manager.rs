@@ -27,7 +27,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    /// Create a new manager instance.
+    /// Creates a new manager instance.
     ///
     /// The storage path provided should not contain any data
     /// other than that which was written by the manager. It
@@ -84,12 +84,18 @@ impl Manager {
         Ok(())
     }
 
-    /// Checks if the manager is already shutdown.
+    /// Checks if the manager is already shut down.
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
     }
 
+    /// Claims a machine by connecting to it via its node address.
+    ///
+    /// Returns a claim ID and a sender to accept/reject the claim.
+    /// The claim ID should be verified against the one displayed on the machine
+    /// before accepting to prevent claim sniping. Once verified, send `true` to
+    /// the sender to accept the claim, or `false` to reject it.
     pub async fn claim_machine(
         &self,
         node_addr: NodeAddr,
@@ -97,6 +103,7 @@ impl Manager {
         self.iroh_protocol.claim_machine(node_addr).await
     }
 
+    /// Lists the node IDs of all machines claimed by this manager.
     pub fn list_machine_ids(&self) -> anyhow::Result<Vec<NodeId>> {
         Ok(self
             .iroh_protocol
@@ -106,6 +113,9 @@ impl Manager {
             .collect())
     }
 
+    /// Gets the configuration for a specific machine.
+    ///
+    /// Returns `Some` if the machine is configured, `None` otherwise.
     pub async fn get_machine_config(
         &self,
         machine_id: &NodeId,
@@ -113,6 +123,7 @@ impl Manager {
         self.iroh_protocol.get_machine_config(machine_id).await
     }
 
+    /// Sets the configuration for a specific machine.
     pub async fn set_machine_config(
         &self,
         machine_id: &NodeId,
@@ -138,6 +149,11 @@ impl Manager {
         self.wallet.get_local_balance().await
     }
 
+    /// Sweeps all ecash notes from a federation into out-of-band notes.
+    ///
+    /// Returns `Some` if there were notes to sweep, `None` if the balance was zero.
+    /// The operation will be cancelled and the notes reclaimed after the specified
+    /// duration if they haven't been claimed elsewhere.
     pub async fn sweep_all_ecash_notes<M: Serialize + Send>(
         &self,
         federation_id: FederationId,
@@ -150,7 +166,7 @@ impl Manager {
             .await
     }
 
-    /// Make completed payments syncable to the manager.
+    /// Makes completed payments syncable to the manager.
     /// This must be called periodically to ensure that
     /// the manager is able to sweep completed payments.
     async fn sweep_payments(manager_protocol: &Arc<ManagerProtocol>, wallet: &Arc<Wallet>) {
