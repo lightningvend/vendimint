@@ -17,6 +17,7 @@ mod tests {
     };
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use fedimint_lnv2_remote_client::ClaimableContract;
+    use tokio::time::Instant;
     use tpe::{AggregatePublicKey, G1Affine};
 
     const IROH_WAIT_DELAY: Duration = Duration::from_millis(100);
@@ -133,6 +134,28 @@ mod tests {
 
         let claimable_contracts = manager_protocol.get_claimable_contracts().await?;
         assert!(claimable_contracts.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_machine_shutdown() -> anyhow::Result<()> {
+        let machine_storage_path = tempfile::tempdir()?;
+        let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
+
+        machine_protocol.shutdown().await?;
+
+        // After machine shutdown, claim requests should immediately return `None`.
+        let start = Instant::now();
+        for _ in 0..10 {
+            assert!(
+                machine_protocol
+                    .await_next_incoming_claim_request()
+                    .await
+                    .is_none()
+            );
+        }
+        assert!(start.elapsed() < Duration::from_millis(10));
 
         Ok(())
     }
