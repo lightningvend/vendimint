@@ -118,6 +118,27 @@ impl Machine {
         self.iroh_protocol.get_machine_config().await
     }
 
+    /// Awaits the next request from a manager to claim the machine.
+    ///
+    /// Always immediately returns `None` after [`Self::shutdown`] has
+    /// been called. Waits forever if the machine is already claimed
+    /// (or until shutdown).
+    ///
+    /// If the machine is not already claimed, any incoming claim request
+    /// will wait for this method to be called. For this reason, **it is
+    /// important to routinely call this method** (until it returns `None`),
+    /// ideally in a loop, to ensure quick alerting of any incoming claim
+    /// requests.
+    ///
+    /// When a `Some` is returned, it will contain the claim ID which should
+    /// be presented to the user to compare with the claim ID displayed on the
+    /// manager. This is to prevent eavesdropping/claim sniping. It will also
+    /// contain a `oneshot::Sender<bool>` which can be used to respond to the
+    /// claim request. Sending `true` will accept the claim, and sending `false`
+    /// or dropping the sender will reject it. If the machine and the manager
+    /// both accept the claim after verifying matching claim IDs, the claim will
+    /// be accepted by both parties. If either one rejects the claim, it will be
+    /// aborted by both parties.
     pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
         self.iroh_protocol.await_next_incoming_claim_request().await
     }
