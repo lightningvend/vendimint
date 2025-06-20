@@ -173,16 +173,8 @@ impl MachineProtocol {
     pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
         self.router.endpoint().node_addr().await
     }
-
-    pub async fn await_next_incoming_claim_request(
-        &self,
-    ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
-        self.claim_request_receiver
-            .lock()
-            .await
-            .recv()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("claim channel closed"))
+    pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
+        self.claim_request_receiver.lock().await.recv().await
     }
 
     pub async fn write_payment_to_machine_doc(

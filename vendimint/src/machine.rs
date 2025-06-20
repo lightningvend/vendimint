@@ -106,25 +106,30 @@ impl Machine {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
     }
 
-    /// Gets the network address of the machine, which
-    /// can be exchanged out-of-band and passed into
-    /// [`crate::Manager::claim_machine`].
+    /// Gets the network address of the machine, which can be exchanged
+    /// out-of-band and passed into [`crate::Manager::claim_machine`].
     pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
         self.iroh_protocol.node_addr().await
     }
 
-    /// Gets the machine's configuration, as set
-    /// by [`crate::Manager::set_machine_config`].
+    /// Gets the machine's configuration, as set by [`crate::Manager::set_machine_config`].
+    /// Is `Some` if the machine is configured, `None` otherwise.
     pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
         self.iroh_protocol.get_machine_config().await
     }
 
-    pub async fn await_next_incoming_claim_request(
-        &self,
-    ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
+    pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
         self.iroh_protocol.await_next_incoming_claim_request().await
     }
 
+    /// Creates a [Bolt11](https://github.com/lightning/bolts/blob/master/11-payment-encoding.md)
+    /// lightning invoice and an operation ID which can be used to await the payment/timeout
+    /// of the invoice by passing it into [`Self::await_receive_payment_final_state`].
+    ///
+    /// If the invoice is paid, the funds will be automatically credited to the wallet of the
+    /// manager that claimed the machine whenever both the machine and the manager are online
+    /// at the same time. While the machine knows when the invoice is paid, it never has
+    /// access to the funds.
     pub async fn receive_payment(
         &self,
         amount: Amount,
@@ -150,6 +155,7 @@ impl Machine {
             .await
     }
 
+    /// Awaits the final state of an invoice created by [`Self::receive_payment`].
     pub async fn await_receive_payment_final_state(
         &self,
         operation_id: OperationId,

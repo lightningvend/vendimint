@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
                 manager.claim_machine(machine.node_addr().await?).await?;
 
             let (machine_claim_pin, machine_claim_accepter) =
-                machine.await_next_incoming_claim_request().await?;
+                machine.await_next_incoming_claim_request().await.unwrap();
 
             assert_eq!(machine_claim_pin, manager_claim_pin);
             assert!(machine_claim_accepter.send(true).is_ok());
