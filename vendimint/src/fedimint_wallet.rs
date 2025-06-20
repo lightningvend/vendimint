@@ -47,14 +47,14 @@ pub struct WalletView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FederationView {
     pub federation_id: FederationId,
-    pub name_or: Option<String>,
+    pub name: Option<String>,
     pub balance: Amount,
 }
 
 impl Display for FederationView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name_or_id = self
-            .name_or
+            .name
             .clone()
             .unwrap_or_else(|| self.federation_id.to_string());
 
@@ -117,7 +117,7 @@ impl Drop for Wallet {
 
 impl Wallet {
     pub fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(&fedimint_clients_data_dir).unwrap();
+        std::fs::create_dir_all(&fedimint_clients_data_dir)?;
 
         let (view_update_sender, view_update_receiver) = watch::channel(WalletView {
             federations: BTreeMap::new(),
@@ -200,8 +200,8 @@ impl Wallet {
         tokio_stream::wrappers::WatchStream::new(self.view_update_receiver.clone())
     }
 
-    /// Tell `view_update_task` to update the view, and wait for it to complete.
-    /// This ensures any streams opened by `get_update_stream`  have yielded the
+    /// Tells `view_update_task` to update the view, and waits for it to complete.
+    /// This ensures any streams opened by `get_update_stream` have yielded the
     /// latest view. This function should be called at the end of any function
     /// that modifies the view.
     async fn force_update_view(
@@ -347,7 +347,7 @@ impl Wallet {
                 *federation_id,
                 FederationView {
                     federation_id: *federation_id,
-                    name_or: client
+                    name: client
                         .config()
                         .await
                         .global

@@ -27,7 +27,7 @@ pub struct Machine {
 }
 
 impl Machine {
-    /// Create a new machine instance.
+    /// Creates a new machine instance.
     ///
     /// The storage path provided should not contain any data
     /// other than that which was written by the machine. It
@@ -100,7 +100,7 @@ impl Machine {
         Ok(())
     }
 
-    /// Checks if the machine is already shutdown.
+    /// Checks if the machine is already shut down.
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
@@ -113,7 +113,7 @@ impl Machine {
     }
 
     /// Gets the machine's configuration, as set by [`crate::Manager::set_machine_config`].
-    /// Is `Some` if the machine is configured, `None` otherwise.
+    /// Returns `Some` if the machine is configured, `None` otherwise.
     pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
         self.iroh_protocol.get_machine_config().await
     }
@@ -130,8 +130,8 @@ impl Machine {
     /// ideally in a loop, to ensure quick alerting of any incoming claim
     /// requests.
     ///
-    /// When a `Some` is returned, it will contain the claim ID which should
-    /// be presented to the user to compare with the claim ID displayed on the
+    /// When `Some` is returned, it will contain the claim ID which should be
+    /// presented to the user to compare with the claim ID displayed on the
     /// manager. This is to prevent eavesdropping/claim sniping. It will also
     /// contain a `oneshot::Sender<bool>` which can be used to respond to the
     /// claim request. Sending `true` will accept the claim, and sending `false`
@@ -186,7 +186,7 @@ impl Machine {
             .await
     }
 
-    /// Make completed payments syncable to the manager.
+    /// Makes completed payments syncable to the manager.
     /// This must be called periodically to ensure that
     /// the manager is able to sweep completed payments.
     async fn make_completed_payments_syncable(
