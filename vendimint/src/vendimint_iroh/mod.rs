@@ -165,9 +165,10 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        // TODO: Throughout all tests in this file, replace assertions
-        // of format `assert!(foo.is_some());` with `assert_eq!(foo, Some(bar));`.
-        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager_protocol.get_public_key().await?)
+        );
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         Ok(())
@@ -282,7 +283,10 @@ mod tests {
             10,
         )
         .await?;
-        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager1_protocol.get_public_key().await?)
+        );
         assert_eq!(manager1_protocol.list_machines()?.len(), 1);
 
         // Second manager attempts to claim
@@ -292,7 +296,10 @@ mod tests {
 
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
-        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager1_protocol.get_public_key().await?)
+        );
         assert_eq!(manager2_protocol.list_machines()?.len(), 0);
 
         Ok(())
@@ -345,7 +352,10 @@ mod tests {
 
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
-        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager2_protocol.get_public_key().await?)
+        );
         assert_eq!(manager2_protocol.list_machines()?.len(), 1);
 
         Ok(())
@@ -369,7 +379,10 @@ mod tests {
         )
         .await?;
 
-        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager_protocol.get_public_key().await?),
+        );
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         machine_protocol.shutdown().await?;
@@ -379,7 +392,10 @@ mod tests {
         let addr_after = machine_protocol.node_addr().await?;
 
         assert_eq!(addr_before.node_id, addr_after.node_id);
-        assert!(machine_protocol.get_manager_pubkey().await.is_some());
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager_protocol.get_public_key().await?),
+        );
 
         Ok(())
     }
