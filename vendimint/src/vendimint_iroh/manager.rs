@@ -119,7 +119,7 @@ impl ManagerProtocol {
         Ok((pin, tx))
     }
 
-    pub fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
+    fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
         let machine_doc_ticket_path = self
             .get_machine_doc_ticket_path()
             .join(machine_id.to_string());
@@ -297,5 +297,10 @@ impl ManagerProtocol {
 
     fn get_machine_doc_ticket_path(&self) -> PathBuf {
         self.app_storage_path.join(MACHINE_DOC_TICKETS_SUBDIR)
+    }
+
+    #[cfg(test)]
+    pub async fn get_public_key(&self) -> anyhow::Result<iroh::PublicKey> {
+        Ok(self.router.endpoint().node_addr().await?.node_id)
     }
 }
