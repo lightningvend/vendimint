@@ -124,6 +124,8 @@ impl Manager {
     }
 
     /// Sets the configuration for a specific machine.
+    // TODO: Make this private and automatically set machine
+    // configs, updating any time a new federation is joined.
     pub async fn set_machine_config(
         &self,
         machine_id: &NodeId,
@@ -138,6 +140,7 @@ impl Manager {
         self.wallet.join_federation(invite_code).await
     }
 
+    // TODO: Make this private and use it to generate machine configs.
     pub async fn get_fedimint_lnv2_claim_pubkey(
         &self,
         federation_id: FederationId,
