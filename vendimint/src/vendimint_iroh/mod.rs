@@ -95,6 +95,38 @@ mod tests {
         Err(anyhow::anyhow!("Condition timeout"))
     }
 
+    /// Helper to create a machine-manager pair and perform a successful claim
+    ///
+    /// This combines the common pattern of creating protocols, performing a claim,
+    /// and waiting for the claim to complete. Returns the claimed pair ready for
+    /// testing specific functionality.
+    async fn create_claimed_machine_manager_pair() -> anyhow::Result<(
+        MachineProtocol,
+        ManagerProtocol,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    )> {
+        let (machine_protocol, manager_protocol, machine_temp, manager_temp) =
+            create_machine_manager_pair().await?;
+
+        let (_pin, machine_protocol, manager_protocol) =
+            perform_successful_claim(machine_protocol, manager_protocol, true, true).await?;
+
+        // Wait for claim to finish
+        wait_for_condition(
+            || async { manager_protocol.list_machines().unwrap().len() == 1 },
+            10,
+        )
+        .await?;
+
+        Ok((
+            machine_protocol,
+            manager_protocol,
+            machine_temp,
+            manager_temp,
+        ))
+    }
+
     /// Helper to create test claimable contract
     fn create_test_claimable_contract(
         pk: fedimint_core::secp256k1::PublicKey,
@@ -131,16 +163,7 @@ mod tests {
     #[tokio::test]
     async fn test_basic_claim_flow() -> anyhow::Result<()> {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_machine_manager_pair().await?;
-        let (_pin, machine_protocol, manager_protocol) =
-            perform_successful_claim(machine_protocol, manager_protocol, true, true).await?;
-
-        // Wait for claim to finish
-        wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
+            create_claimed_machine_manager_pair().await?;
 
         // TODO: Throughout all tests in this file, replace assertions
         // of format `assert!(foo.is_some());` with `assert_eq!(foo, Some(bar));`.
@@ -153,16 +176,7 @@ mod tests {
     #[tokio::test]
     async fn test_machine_config_operations() -> anyhow::Result<()> {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_machine_manager_pair().await?;
-        let (_pin, machine_protocol, manager_protocol) =
-            perform_successful_claim(machine_protocol, manager_protocol, true, true).await?;
-
-        // Wait for claim to finish
-        wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
+            create_claimed_machine_manager_pair().await?;
 
         assert_eq!(machine_protocol.get_machine_config().await?, None);
 
@@ -197,16 +211,7 @@ mod tests {
     #[tokio::test]
     async fn test_claimable_contract_operations() -> anyhow::Result<()> {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_machine_manager_pair().await?;
-        let (_pin, machine_protocol, manager_protocol) =
-            perform_successful_claim(machine_protocol, manager_protocol, true, true).await?;
-
-        // Wait for claim to finish
-        wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
+            create_claimed_machine_manager_pair().await?;
 
         let pk = get_test_public_key()?;
         let (dummy_federation_id, dummy_claimable_contract) = create_test_claimable_contract(pk);
