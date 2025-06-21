@@ -56,6 +56,7 @@ impl Manager {
         let wallet_clone = wallet.clone();
         let syncer_task_handle = tokio::task::spawn(async move {
             loop {
+                Self::update_machine_configs(&iroh_protocol_clone, &wallet_clone).await;
                 Self::sweep_payments(&iroh_protocol_clone, &wallet_clone).await;
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -126,7 +127,7 @@ impl Manager {
     /// Sets the configuration for a specific machine.
     // TODO: Make this private and automatically set machine
     // configs, updating any time a new federation is joined.
-    pub async fn set_machine_config(
+    async fn set_machine_config(
         &self,
         machine_id: &NodeId,
         machine_config: &MachineConfig,
@@ -137,11 +138,13 @@ impl Manager {
     }
 
     pub async fn join_federation(&self, invite_code: InviteCode) -> anyhow::Result<()> {
-        self.wallet.join_federation(invite_code).await
+        self.wallet.set_default_federation(invite_code).await?;
+        Self::update_machine_configs(&self.iroh_protocol, &self.wallet).await;
+        Ok(())
     }
 
     // TODO: Make this private and use it to generate machine configs.
-    pub async fn get_fedimint_lnv2_claim_pubkey(
+    async fn get_fedimint_lnv2_claim_pubkey(
         &self,
         federation_id: FederationId,
     ) -> Option<PublicKey> {
@@ -208,6 +211,44 @@ impl Manager {
                 .await;
 
             tracing::info!("Transferred {contract_count} payment(s) from iroh doc");
+        }
+    }
+
+    async fn update_machine_configs(manager_protocol: &Arc<ManagerProtocol>, wallet: &Arc<Wallet>) {
+        let default_invite = match wallet.get_default_invite_code().await {
+            Ok(Some(code)) => code,
+            _ => return,
+        };
+        let federation_id = default_invite.federation_id();
+
+        let Some(claimer_pk) = wallet.get_lnv2_claim_pubkey(federation_id).await else {
+            return;
+        };
+
+        let machine_ids = match manager_protocol.list_machines() {
+            Ok(list) => list.into_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+
+        let config = MachineConfig {
+            federation_invite_code: default_invite,
+            claimer_pk,
+        };
+
+        for machine_id in machine_ids {
+            let current = match manager_protocol.get_machine_config(&machine_id).await {
+                Ok(cfg) => cfg,
+                Err(_) => continue,
+            };
+
+            if current
+                .map(|c| c.federation_invite_code.federation_id() != federation_id)
+                .unwrap_or(true)
+            {
+                let _ = manager_protocol
+                    .set_machine_config(&machine_id, &config)
+                    .await;
+            }
         }
     }
 }
