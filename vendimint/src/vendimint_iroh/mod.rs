@@ -10,6 +10,7 @@ pub use shared::MachineConfig;
 mod tests {
     use super::*;
 
+    use anyhow::Context;
     use std::{str::FromStr, time::Duration};
 
     use fedimint_core::{
@@ -21,6 +22,8 @@ mod tests {
     use tpe::{AggregatePublicKey, G1Affine};
 
     const IROH_WAIT_DELAY: Duration = Duration::from_millis(100);
+    const DEFAULT_WAIT_ITERATIONS: u32 = 10;
+    const TEST_FEDERATION_INVITE_CODE: &str = "fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562";
 
     /// Helper to create a machine and manager protocol pair with temp directories
     ///
@@ -92,7 +95,11 @@ mod tests {
             }
             tokio::time::sleep(IROH_WAIT_DELAY).await;
         }
-        Err(anyhow::anyhow!("Condition timeout"))
+        Err(anyhow::anyhow!(
+            "Condition timeout after {} iterations ({:?} total)",
+            timeout_iterations,
+            IROH_WAIT_DELAY * timeout_iterations
+        ))
     }
 
     /// Helper to create a machine-manager pair that are paired and ready for testing.
@@ -112,12 +119,10 @@ mod tests {
         let (_pin, machine_protocol, manager_protocol) =
             perform_claim(machine_protocol, manager_protocol, true, true).await?;
 
-        // Wait for claim to finish
-        wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
+        // Wait for claim to finish.
+        wait_for_machines_listed(&manager_protocol, 1)
+            .await
+            .context("Failed to complete machine claiming process")?;
 
         Ok((
             machine_protocol,
@@ -128,17 +133,10 @@ mod tests {
     }
 
     /// Helper to create test claimable contract
-    fn create_test_claimable_contract(
-        pk: fedimint_core::secp256k1::PublicKey,
-    ) -> (FederationId, ClaimableContract) {
-        create_test_claimable_contract_with_federation_id(pk, FederationId::dummy())
-    }
+    fn create_test_federation_id_and_claimable_contract() -> (FederationId, ClaimableContract) {
+        let pk = get_test_public_key();
+        let federation_id = FederationId::dummy();
 
-    /// Helper to create test claimable contract with specific federation ID
-    fn create_test_claimable_contract_with_federation_id(
-        pk: fedimint_core::secp256k1::PublicKey,
-        federation_id: FederationId,
-    ) -> (FederationId, ClaimableContract) {
         let dummy_claimable_contract = ClaimableContract {
             contract: IncomingContract::new(
                 AggregatePublicKey(G1Affine::identity()),
@@ -160,11 +158,11 @@ mod tests {
     }
 
     /// Helper to get test public key
-    fn get_test_public_key() -> anyhow::Result<fedimint_core::secp256k1::PublicKey> {
+    fn get_test_public_key() -> fedimint_core::secp256k1::PublicKey {
         fedimint_core::secp256k1::PublicKey::from_str(
             "03e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
         )
-        .map_err(Into::into)
+        .unwrap()
     }
 
     /// Helper to create a dummy NodeId for testing
@@ -174,15 +172,141 @@ mod tests {
         iroh::NodeId::from_str(dummy_hex).unwrap()
     }
 
+    /// Helper to create standard test machine config
+    fn create_test_machine_config() -> MachineConfig {
+        MachineConfig {
+            federation_invite_code: InviteCode::from_str(TEST_FEDERATION_INVITE_CODE).unwrap(),
+            claimer_pk: get_test_public_key(),
+        }
+    }
+
+    /// Helper to wait for contract synchronization with specific count
+    async fn wait_for_contract_sync(
+        manager_protocol: &ManagerProtocol,
+        expected_count: usize,
+    ) -> anyhow::Result<()> {
+        wait_for_condition(
+            || async {
+                manager_protocol
+                    .get_claimable_contracts()
+                    .await
+                    .map(|contracts| contracts.len() == expected_count)
+                    .unwrap_or(false)
+            },
+            DEFAULT_WAIT_ITERATIONS,
+        )
+        .await
+        .with_context(|| format!("Failed waiting for {} contracts to sync", expected_count))
+    }
+
+    /// Helper to wait for manager to have claimed machines
+    async fn wait_for_machines_listed(
+        manager_protocol: &ManagerProtocol,
+        expected_count: usize,
+    ) -> anyhow::Result<()> {
+        wait_for_condition(
+            || async { manager_protocol.list_machines().unwrap().len() == expected_count },
+            DEFAULT_WAIT_ITERATIONS,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "Failed waiting for manager to list {} machines",
+                expected_count
+            )
+        })
+    }
+
+    /// Helper to assert that a given machine and manager both view each other as paired.
+    async fn assert_machine_claimed_by_manager(
+        machine_protocol: &MachineProtocol,
+        manager_protocol: &ManagerProtocol,
+    ) -> anyhow::Result<()> {
+        // Assert the machine sees the manager as its manager.
+        assert_eq!(
+            machine_protocol.get_manager_pubkey().await,
+            Some(manager_protocol.get_public_key().await?),
+            "Machine should be claimed by the specified manager"
+        );
+
+        // Assert the manager sees the machine as its machine.
+        assert!(
+            manager_protocol
+                .list_machines()?
+                .into_iter()
+                .map(|(pubkey, _)| pubkey)
+                .collect::<Vec<_>>()
+                .contains(&machine_protocol.node_addr().await.unwrap().node_id),
+            "Manager should own the machine"
+        );
+        Ok(())
+    }
+
+    /// Helper to set and verify machine config with proper waiting
+    async fn set_and_verify_machine_config(
+        machine_protocol: &MachineProtocol,
+        manager_protocol: &ManagerProtocol,
+        machine_id: &iroh::NodeId,
+        config: &MachineConfig,
+    ) -> anyhow::Result<()> {
+        manager_protocol
+            .set_machine_config(machine_id, config)
+            .await?;
+
+        // Wait for machine config to be set on the machine.
+        wait_for_condition(
+            || async { matches!(machine_protocol.get_machine_config().await, Ok(Some(_))) },
+            DEFAULT_WAIT_ITERATIONS,
+        )
+        .await
+        .context("Failed waiting for machine config to be set")?;
+
+        assert_eq!(
+            machine_protocol.get_machine_config().await?,
+            Some(config.clone())
+        );
+        assert_eq!(
+            manager_protocol.get_machine_config(machine_id).await?,
+            Some(config.clone())
+        );
+
+        Ok(())
+    }
+
+    /// Helper to write contract and wait for sync
+    async fn write_and_sync_contract(
+        machine_protocol: &MachineProtocol,
+        manager_protocol: &ManagerProtocol,
+        federation_id: &FederationId,
+        contract: &ClaimableContract,
+    ) -> anyhow::Result<()> {
+        let contract_count_before = manager_protocol.get_claimable_contracts().await?.len();
+
+        machine_protocol
+            .write_payment_to_machine_doc(federation_id, contract)
+            .await?;
+
+        wait_for_contract_sync(manager_protocol, contract_count_before + 1).await
+    }
+
+    /// Helper to spawn a manager claim task
+    async fn spawn_manager_claim_task(
+        manager_protocol: ManagerProtocol,
+        machine_addr: iroh::NodeAddr,
+    ) -> tokio::task::JoinHandle<(u32, ManagerProtocol)> {
+        tokio::spawn(async move {
+            let (pin, tx) = manager_protocol.claim_machine(machine_addr).await.unwrap();
+            tx.send(true).unwrap();
+            (pin, manager_protocol)
+        })
+    }
+
     #[tokio::test]
     async fn test_basic_claim_flow() -> anyhow::Result<()> {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        assert_eq!(
-            machine_protocol.get_manager_pubkey().await,
-            Some(manager_protocol.get_public_key().await?)
-        );
+        assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
         assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         Ok(())
@@ -195,30 +319,16 @@ mod tests {
 
         assert_eq!(machine_protocol.get_machine_config().await?, None);
 
-        let pk = get_test_public_key()?;
-        let federation_invite_code = InviteCode::from_str("fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562").unwrap();
-
-        let machine_config = MachineConfig {
-            federation_invite_code,
-            claimer_pk: pk,
-        };
-
+        let machine_config = create_test_machine_config();
         let machine_id = manager_protocol.list_machines().unwrap()[0].0;
-        manager_protocol
-            .set_machine_config(&machine_id, &machine_config)
-            .await?;
 
-        // Wait for the machine protocol to receive the invite code.
-        wait_for_condition(
-            || async { matches!(machine_protocol.get_machine_config().await, Ok(Some(_))) },
-            10,
+        set_and_verify_machine_config(
+            &machine_protocol,
+            &manager_protocol,
+            &machine_id,
+            &machine_config,
         )
         .await?;
-
-        assert_eq!(
-            machine_protocol.get_machine_config().await?,
-            Some(machine_config)
-        );
 
         Ok(())
     }
@@ -228,17 +338,14 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let pk = get_test_public_key()?;
-        let (dummy_federation_id, dummy_claimable_contract) = create_test_claimable_contract(pk);
+        let (federation_id, claimable_contract) =
+            create_test_federation_id_and_claimable_contract();
 
-        machine_protocol
-            .write_payment_to_machine_doc(&dummy_federation_id, &dummy_claimable_contract)
-            .await?;
-
-        // Wait for the manager protocol to sync the claimable contracts.
-        wait_for_condition(
-            || async { manager_protocol.get_claimable_contracts().await.is_ok() },
-            10,
+        write_and_sync_contract(
+            &machine_protocol,
+            &manager_protocol,
+            &federation_id,
+            &claimable_contract,
         )
         .await?;
 
@@ -292,16 +399,8 @@ mod tests {
         let (_pin, machine_protocol, manager1_protocol) =
             perform_claim(machine_protocol, manager1_protocol, true, true).await?;
 
-        wait_for_condition(
-            || async { manager1_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
-        assert_eq!(
-            machine_protocol.get_manager_pubkey().await,
-            Some(manager1_protocol.get_public_key().await?)
-        );
-        assert_eq!(manager1_protocol.list_machines()?.len(), 1);
+        wait_for_machines_listed(&manager1_protocol, 1).await?;
+        assert_machine_claimed_by_manager(&machine_protocol, &manager1_protocol).await?;
 
         // Second manager attempts to claim
         let machine_addr2 = machine_protocol.node_addr().await?;
@@ -340,11 +439,8 @@ mod tests {
 
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
-        assert_eq!(
-            machine_protocol.get_manager_pubkey().await,
-            Some(manager_protocol.get_public_key().await?)
-        );
-        assert_eq!(manager_protocol.list_machines()?.len(), 1);
+        assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
+        assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
 
         Ok(())
     }
@@ -374,11 +470,8 @@ mod tests {
 
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
-        assert_eq!(
-            machine_protocol.get_manager_pubkey().await,
-            Some(manager2_protocol.get_public_key().await?)
-        );
-        assert_eq!(manager2_protocol.list_machines()?.len(), 1);
+        assert_machine_claimed_by_manager(&machine_protocol, &manager2_protocol).await?;
+        assert_eq!(manager2_protocol.list_machines().unwrap().len(), 1);
 
         Ok(())
     }
@@ -395,17 +488,8 @@ mod tests {
         let (_pin, machine_protocol, manager_protocol) =
             perform_claim(machine_protocol, manager_protocol, true, true).await?;
 
-        wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
-
-        assert_eq!(
-            machine_protocol.get_manager_pubkey().await,
-            Some(manager_protocol.get_public_key().await?),
-        );
-        assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
+        wait_for_machines_listed(&manager_protocol, 1).await?;
+        assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
 
         machine_protocol.shutdown().await?;
         drop(machine_protocol);
@@ -450,7 +534,6 @@ mod tests {
         let manager_storage_path = tempfile::tempdir()?;
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
-        // Create a dummy NodeId
         let dummy_node_id = create_dummy_node_id();
         let result = manager_protocol.get_machine_config(&dummy_node_id).await;
 
@@ -467,15 +550,7 @@ mod tests {
         let manager_storage_path = tempfile::tempdir()?;
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
-        let pk = get_test_public_key()?;
-        let federation_invite_code = InviteCode::from_str("fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562").unwrap();
-
-        let machine_config = MachineConfig {
-            federation_invite_code,
-            claimer_pk: pk,
-        };
-
-        // Create a dummy NodeId
+        let machine_config = create_test_machine_config();
         let dummy_node_id = create_dummy_node_id();
         let result = manager_protocol
             .set_machine_config(&dummy_node_id, &machine_config)
@@ -519,8 +594,8 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let pk = get_test_public_key()?;
-        let (federation_id, claimable_contract) = create_test_claimable_contract(pk);
+        let (federation_id, claimable_contract) =
+            create_test_federation_id_and_claimable_contract();
 
         // Write the same contract twice (this should be idempotent)
         machine_protocol
@@ -530,12 +605,7 @@ mod tests {
             .write_payment_to_machine_doc(&federation_id, &claimable_contract)
             .await?;
 
-        // Wait for sync
-        wait_for_condition(
-            || async { manager_protocol.get_claimable_contracts().await.is_ok() },
-            10,
-        )
-        .await?;
+        wait_for_contract_sync(&manager_protocol, 1).await?;
 
         let contracts = manager_protocol.get_claimable_contracts().await?;
         assert_eq!(
@@ -555,24 +625,17 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let pk = get_test_public_key()?;
-        let (federation_id, claimable_contract) = create_test_claimable_contract(pk);
+        let (federation_id, claimable_contract) =
+            create_test_federation_id_and_claimable_contract();
 
         let contracts = manager_protocol.get_claimable_contracts().await?;
         assert_eq!(contracts.len(), 0);
 
-        // Write a contract.
-        machine_protocol
-            .write_payment_to_machine_doc(&federation_id, &claimable_contract)
-            .await?;
-
-        // Wait for contract to sync from machine to manager.
-        wait_for_condition(
-            || async {
-                let contracts = manager_protocol.get_claimable_contracts().await.unwrap();
-                contracts.len() == 1
-            },
-            10,
+        write_and_sync_contract(
+            &machine_protocol,
+            &manager_protocol,
+            &federation_id,
+            &claimable_contract,
         )
         .await?;
 
@@ -593,8 +656,8 @@ mod tests {
     async fn test_shared_protocol_key_functions() -> anyhow::Result<()> {
         use super::shared::SharedProtocol;
 
-        let pk = get_test_public_key()?;
-        let (federation_id, claimable_contract) = create_test_claimable_contract(pk);
+        let (federation_id, claimable_contract) =
+            create_test_federation_id_and_claimable_contract();
 
         // Test key creation and parsing
         let key = SharedProtocol::create_claimable_contract_machine_doc_key(
@@ -662,15 +725,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_machine_config_serialization() -> anyhow::Result<()> {
-        let pk = get_test_public_key()?;
-        let federation_invite_code = InviteCode::from_str(
-            "fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562"
-        ).unwrap();
-
-        let machine_config = MachineConfig {
-            federation_invite_code: federation_invite_code.clone(),
-            claimer_pk: pk,
-        };
+        let machine_config = create_test_machine_config();
 
         // Test serialization and deserialization
         let serialized = serde_json::to_string(&machine_config)?;
@@ -678,10 +733,10 @@ mod tests {
 
         assert_eq!(machine_config, deserialized);
         assert_eq!(
-            machine_config.federation_invite_code,
-            federation_invite_code
+            machine_config.federation_invite_code.to_string(),
+            TEST_FEDERATION_INVITE_CODE
         );
-        assert_eq!(machine_config.claimer_pk, pk);
+        assert_eq!(machine_config.claimer_pk, get_test_public_key());
 
         Ok(())
     }
@@ -700,35 +755,9 @@ mod tests {
         let machine_addr = machine_protocol.node_addr().await?;
 
         // Start multiple concurrent claim attempts
-        let manager1_task = tokio::spawn({
-            let manager1_protocol = manager1_protocol;
-            let machine_addr = machine_addr.clone();
-            async move {
-                let (pin, tx) = manager1_protocol.claim_machine(machine_addr).await.unwrap();
-                tx.send(true).unwrap();
-                (pin, manager1_protocol)
-            }
-        });
-
-        let manager2_task = tokio::spawn({
-            let manager2_protocol = manager2_protocol;
-            let machine_addr = machine_addr.clone();
-            async move {
-                let (pin, tx) = manager2_protocol.claim_machine(machine_addr).await.unwrap();
-                tx.send(true).unwrap();
-                (pin, manager2_protocol)
-            }
-        });
-
-        let manager3_task = tokio::spawn({
-            let manager3_protocol = manager3_protocol;
-            let machine_addr = machine_addr;
-            async move {
-                let (pin, tx) = manager3_protocol.claim_machine(machine_addr).await.unwrap();
-                tx.send(true).unwrap();
-                (pin, manager3_protocol)
-            }
-        });
+        let manager1_task = spawn_manager_claim_task(manager1_protocol, machine_addr.clone()).await;
+        let manager2_task = spawn_manager_claim_task(manager2_protocol, machine_addr.clone()).await;
+        let manager3_task = spawn_manager_claim_task(manager3_protocol, machine_addr).await;
 
         // Machine should respond to exactly one claim request
         let machine_task = tokio::spawn(async move {
@@ -748,10 +777,8 @@ mod tests {
             (pin_machine, machine_protocol),
         ) = tokio::try_join!(manager1_task, manager2_task, manager3_task, machine_task)?;
 
-        // Collect all manager PINs
+        // Collect all manager PINs and verify machine PIN matches one of them
         let manager_pins = vec![pin1, pin2, pin3];
-
-        // Machine PIN should match one of the manager PINs
         assert!(
             manager_pins.contains(&pin_machine),
             "Machine PIN {} should match one of the manager PINs: {:?}",
@@ -801,15 +828,7 @@ mod tests {
         let machine_id = manager_protocol.list_machines()?[0].0;
 
         // Set a machine config
-        let pk = get_test_public_key()?;
-        let federation_invite_code = InviteCode::from_str(
-            "fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562"
-        ).unwrap();
-
-        let machine_config = MachineConfig {
-            federation_invite_code,
-            claimer_pk: pk,
-        };
+        let machine_config = create_test_machine_config();
 
         manager_protocol
             .set_machine_config(&machine_id, &machine_config)
@@ -848,12 +867,7 @@ mod tests {
         let (_pin, machine_protocol, manager_protocol) =
             perform_claim(machine_protocol, manager_protocol, true, true).await?;
 
-        // Wait for claim to complete
-        wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == 1 },
-            10,
-        )
-        .await?;
+        wait_for_machines_listed(&manager_protocol, 1).await?;
 
         // Shutdown machine
         machine_protocol.shutdown().await?;
@@ -881,8 +895,8 @@ mod tests {
     async fn test_machine_doc_key_validation() -> anyhow::Result<()> {
         use super::shared::SharedProtocol;
 
-        let pk = get_test_public_key()?;
-        let (federation_id, claimable_contract) = create_test_claimable_contract(pk);
+        let (federation_id, claimable_contract) =
+            create_test_federation_id_and_claimable_contract();
 
         // Test valid key creation and parsing
         let key = SharedProtocol::create_claimable_contract_machine_doc_key(
@@ -956,36 +970,15 @@ mod tests {
         );
 
         // Set a config
-        let pk = get_test_public_key()?;
-        let federation_invite_code = InviteCode::from_str(
-            "fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562"
-        ).unwrap();
+        let machine_config = create_test_machine_config();
 
-        let machine_config = MachineConfig {
-            federation_invite_code: federation_invite_code.clone(),
-            claimer_pk: pk,
-        };
-
-        manager_protocol
-            .set_machine_config(&machine_id, &machine_config)
-            .await?;
-
-        // Wait for sync
-        wait_for_condition(
-            || async { matches!(machine_protocol.get_machine_config().await, Ok(Some(_))) },
-            10,
+        set_and_verify_machine_config(
+            &machine_protocol,
+            &manager_protocol,
+            &machine_id,
+            &machine_config,
         )
         .await?;
-
-        // Both should see the config
-        assert_eq!(
-            machine_protocol.get_machine_config().await?,
-            Some(machine_config.clone())
-        );
-        assert_eq!(
-            manager_protocol.get_machine_config(&machine_id).await?,
-            Some(machine_config.clone())
-        );
 
         // Update the config with different claimer key
         let new_pk = fedimint_core::secp256k1::PublicKey::from_str(
@@ -994,32 +987,17 @@ mod tests {
         .unwrap();
 
         let updated_config = MachineConfig {
-            federation_invite_code,
+            federation_invite_code: InviteCode::from_str(TEST_FEDERATION_INVITE_CODE)?,
             claimer_pk: new_pk,
         };
 
-        manager_protocol
-            .set_machine_config(&machine_id, &updated_config)
-            .await?;
-
-        // Wait for sync
-        wait_for_condition(
-            || async {
-                matches!(machine_protocol.get_machine_config().await, Ok(Some(ref config)) if config.claimer_pk == new_pk)
-            },
-            10,
+        set_and_verify_machine_config(
+            &machine_protocol,
+            &manager_protocol,
+            &machine_id,
+            &updated_config,
         )
         .await?;
-
-        // Both should see the updated config
-        assert_eq!(
-            machine_protocol.get_machine_config().await?,
-            Some(updated_config.clone())
-        );
-        assert_eq!(
-            manager_protocol.get_machine_config(&machine_id).await?,
-            Some(updated_config)
-        );
 
         Ok(())
     }
