@@ -558,22 +558,26 @@ mod tests {
         let pk = get_test_public_key()?;
         let (federation_id, claimable_contract) = create_test_claimable_contract(pk);
 
-        // Write a contract
+        let contracts = manager_protocol.get_claimable_contracts().await?;
+        assert_eq!(contracts.len(), 0);
+
+        // Write a contract.
         machine_protocol
             .write_payment_to_machine_doc(&federation_id, &claimable_contract)
             .await?;
 
-        // Wait for sync
+        // Wait for contract to sync from machine to manager.
         wait_for_condition(
-            || async { manager_protocol.get_claimable_contracts().await.is_ok() },
+            || async {
+                let contracts = manager_protocol.get_claimable_contracts().await.unwrap();
+                contracts.len() == 1
+            },
             10,
         )
         .await?;
 
-        let contracts = manager_protocol.get_claimable_contracts().await?;
-        assert_eq!(contracts.len(), 1);
-
         // Remove the contract
+        let contracts = manager_protocol.get_claimable_contracts().await?;
         manager_protocol
             .remove_claimable_contracts(contracts)
             .await?;
