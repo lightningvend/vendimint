@@ -119,7 +119,7 @@ impl ManagerProtocol {
         Ok((pin, tx))
     }
 
-    pub fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
+    fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
         let machine_doc_ticket_path = self
             .get_machine_doc_ticket_path()
             .join(machine_id.to_string());
