@@ -104,7 +104,7 @@ impl Manager {
     }
 
     /// Lists the node IDs of all machines claimed by this manager.
-    pub fn list_machine_ids(&self) -> anyhow::Result<Vec<NodeId>> {
+    pub fn list_machine_ids(&self) -> std::io::Result<Vec<NodeId>> {
         Ok(self
             .iroh_protocol
             .list_machines()?
