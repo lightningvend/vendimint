@@ -116,7 +116,7 @@ impl Drop for Wallet {
 }
 
 impl Wallet {
-    pub fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> anyhow::Result<Self> {
+    pub fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> std::io::Result<Self> {
         std::fs::create_dir_all(&fedimint_clients_data_dir)?;
 
         let (view_update_sender, view_update_receiver) = watch::channel(WalletView {
