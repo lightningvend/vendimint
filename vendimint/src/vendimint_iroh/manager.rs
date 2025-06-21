@@ -128,7 +128,7 @@ impl ManagerProtocol {
         Ok(machine_doc_ticket)
     }
 
-    pub fn list_machines(&self) -> anyhow::Result<Vec<(NodeId, DocTicket)>> {
+    pub fn list_machines(&self) -> std::io::Result<Vec<(NodeId, DocTicket)>> {
         let machine_doc_tickets_path = self.get_machine_doc_ticket_path();
         let mut machines = Vec::new();
 
