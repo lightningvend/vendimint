@@ -38,6 +38,7 @@ const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
 const MNEMONIC_PATH: &str = "mnemonic.txt";
 const MNEMONIC_PASSWORD: &str = "";
+const DEFAULT_FEDERATION_PATH: &str = "default_federation.txt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletView {
@@ -270,7 +271,7 @@ impl Wallet {
         Ok(())
     }
 
-    pub async fn join_federation(&self, invite_code: InviteCode) -> anyhow::Result<()> {
+    pub async fn set_default_federation(&self, invite_code: InviteCode) -> anyhow::Result<()> {
         let federation_id = invite_code.federation_id();
 
         let fedimint_clients_data_dir = self.fedimint_clients_data_dir.lock().await;
@@ -278,21 +279,40 @@ impl Wallet {
         let federation_data_dir = fedimint_clients_data_dir.join(federation_id.to_string());
 
         // Short-circuit if we're already connected to this federation.
-        if federation_data_dir.is_dir() {
-            return Ok(());
+        if !federation_data_dir.is_dir() {
+            let db: Database = RocksDb::open(&federation_data_dir).await?.into();
+
+            let client = self
+                .build_client_from_invite_code(invite_code.clone(), db)
+                .await?;
+
+            let mut clients = self.clients.write().await;
+            clients.insert(federation_id, client);
+            self.force_update_view(clients).await;
         }
 
-        let db: Database = RocksDb::open(federation_data_dir).await?.into();
-
-        let client = self.build_client_from_invite_code(invite_code, db).await?;
-
-        let mut clients = self.clients.write().await;
-
-        clients.insert(federation_id, client);
-
-        self.force_update_view(clients).await;
+        // Record the default federation invite code on disk
+        std::fs::write(
+            fedimint_clients_data_dir.join(DEFAULT_FEDERATION_PATH),
+            invite_code.to_string(),
+        )?;
 
         Ok(())
+    }
+
+    pub async fn get_default_federation(&self) -> std::io::Result<Option<InviteCode>> {
+        let fedimint_clients_data_dir = self.fedimint_clients_data_dir.lock().await;
+        let default_path = fedimint_clients_data_dir.join(DEFAULT_FEDERATION_PATH);
+
+        if !default_path.exists() {
+            return Ok(None);
+        }
+
+        let invite_str = std::fs::read_to_string(default_path)?;
+        match invite_str.trim().parse() {
+            Ok(invite) => Ok(Some(invite)),
+            Err(e) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        }
     }
 
     // TODO: Call `ClientModule::leave()` for every module.

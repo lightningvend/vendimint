@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::info!("Manager joining federation...");
             manager
-                .join_federation(federation_invite_code.clone())
+                .update_federation(federation_invite_code.clone())
                 .await?;
 
             // Wait for the claim to sync.
@@ -61,26 +61,14 @@ async fn main() -> anyhow::Result<()> {
             let machine_ids = manager.list_machine_ids()?;
 
             assert_eq!(machine_ids.len(), 1);
-            let machine_id = machine_ids[0];
 
-            let machine_config = vendimint::MachineConfig {
-                federation_invite_code,
-                claimer_pk: manager
-                    .get_fedimint_lnv2_claim_pubkey(fed.calculate_federation_id().parse()?)
-                    .await
-                    .unwrap(),
-            };
-
-            tracing::info!("Configuring machine...");
-            manager
-                .set_machine_config(&machine_id, &machine_config)
-                .await?;
-
-            // Wait for the claim to sync.
-            // TODO: Wait more intelligently.
+            // Wait for manager to auto-configure the machine.
             tokio::time::sleep(Duration::from_secs(5)).await;
-
-            assert_eq!(machine.get_machine_config().await?, Some(machine_config));
+            let machine_config = machine.get_machine_config().await?.unwrap();
+            assert_eq!(
+                machine_config.federation_invite_code,
+                federation_invite_code
+            );
 
             tracing::info!("Machine generating invoice...");
             let (invoice, operation_id) = machine

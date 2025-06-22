@@ -59,7 +59,7 @@ impl Machine {
                 if let Ok(Some(machine_config)) = iroh_protocol_clone.get_machine_config().await {
                     // Handle any change in the machine config.
                     if wallet_clone
-                        .join_federation(machine_config.federation_invite_code.clone())
+                        .set_default_federation(machine_config.federation_invite_code.clone())
                         .await
                         .is_err()
                     {
