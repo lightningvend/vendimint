@@ -5,6 +5,7 @@ use std::{
 
 use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
+use futures_util::StreamExt;
 use iroh::{
     NodeAddr, PublicKey,
     endpoint::Connection,
@@ -19,7 +20,8 @@ use iroh_docs::{
         client::docs::{Doc, ShareMode},
         proto::RpcService,
     },
-    store::Query,
+    store::{QueryBuilder, SingleLatestPerKeyQuery},
+    sync::Entry,
 };
 use n0_future::boxed::BoxFuture;
 use quic_rpc::client::FlumeConnector;
@@ -31,7 +33,8 @@ use tokio::{
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
+    CLAIM_ALPN, KV_PREFIX, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol,
+    claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
@@ -203,7 +206,9 @@ impl MachineProtocol {
         let Some(entry) = self
             .get_or_create_machine_doc()
             .await?
-            .get_one(Query::key_exact(MACHINE_CONFIG_KEY))
+            .get_one(
+                QueryBuilder::<SingleLatestPerKeyQuery>::default().key_exact(MACHINE_CONFIG_KEY),
+            )
             .await?
         else {
             return Ok(None);
@@ -218,15 +223,64 @@ impl MachineProtocol {
         Ok(Some(serde_json::from_slice(&bytes)?))
     }
 
-    #[cfg(test)]
-    pub async fn get_manager_pubkey(&self) -> Option<PublicKey> {
-        *self.claimed_manager_pubkey.lock().await
-    }
-
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data
     /// related to payments received to the current device. Should only be called on a machine.
     async fn get_or_create_machine_doc(&self) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
         get_or_create_machine_doc(&self.app_storage_path, &self.docs).await
+    }
+
+    pub async fn get_kv_value(&self, key: impl AsRef<[u8]>) -> anyhow::Result<Option<Entry>> {
+        let doc = self.get_or_create_machine_doc().await?;
+
+        let mut full_key = KV_PREFIX.to_vec();
+        full_key.extend_from_slice(key.as_ref());
+
+        doc.get_one(QueryBuilder::<SingleLatestPerKeyQuery>::default().key_exact(full_key))
+            .await
+    }
+
+    pub async fn set_kv_value(
+        &self,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> anyhow::Result<()> {
+        let doc = self.get_or_create_machine_doc().await?;
+
+        let mut full_key = KV_PREFIX.to_vec();
+        full_key.extend_from_slice(key.as_ref());
+
+        doc.set_bytes(
+            self.docs.client().authors().default().await?,
+            full_key,
+            value.as_ref().to_vec(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_kv_entries(&self) -> anyhow::Result<Vec<Entry>> {
+        let doc = self.get_or_create_machine_doc().await?;
+
+        let mut entries = Vec::new();
+        let mut entry_stream = doc
+            .get_many(
+                QueryBuilder::<SingleLatestPerKeyQuery>::default()
+                    .key_prefix(KV_PREFIX)
+                    .build(),
+            )
+            .await?;
+
+        while let Some(entry_result) = entry_stream.next().await {
+            entries.push(entry_result?);
+        }
+
+        Ok(entries)
+    }
+
+    #[cfg(test)]
+    pub async fn get_manager_pubkey(&self) -> Option<PublicKey> {
+        *self.claimed_manager_pubkey.lock().await
     }
 }
 

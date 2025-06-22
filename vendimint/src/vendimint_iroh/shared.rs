@@ -19,6 +19,9 @@ use std::str::FromStr;
 
 pub const CLAIMABLE_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
 pub const MACHINE_CONFIG_KEY: [u8; 2] = [0x02, 0xFF];
+/// Prefix for generic key/value storage. Used to store arbitrary data
+/// that has meaning to the API caller, but no meaning within vendimint.
+pub const KV_PREFIX: [u8; 2] = [0x03, 0xFF];
 pub const CLAIM_ALPN: &[u8] = b"machine-claim/0";
 const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 

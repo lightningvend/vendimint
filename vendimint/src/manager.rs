@@ -8,6 +8,7 @@ use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
 use iroh::{NodeAddr, NodeId};
+use iroh_docs::sync::Entry;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
@@ -234,5 +235,43 @@ impl Manager {
                     .await;
             }
         }
+    }
+
+    /// Get a key/value entry from a machine's shared storage.
+    ///
+    /// KV data is stored on an auto-syncing key/value store shared
+    /// between a machine and its manager. It has no meaning within
+    /// the context of vendimint - its meaning is up to the API caller.
+    pub async fn get_kv_value(
+        &self,
+        machine_id: &NodeId,
+        key: impl AsRef<[u8]>,
+    ) -> anyhow::Result<Option<Entry>> {
+        self.iroh_protocol.get_kv_value(machine_id, key).await
+    }
+
+    /// Set a key/value entry in a machine's shared storage.
+    ///
+    /// KV data is stored on an auto-syncing key/value store shared
+    /// between a machine and its manager. It has no meaning within
+    /// the context of vendimint - its meaning is up to the API caller.
+    pub async fn set_kv_value(
+        &self,
+        machine_id: &NodeId,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> anyhow::Result<()> {
+        self.iroh_protocol
+            .set_kv_value(machine_id, key, value)
+            .await
+    }
+
+    /// Get all key/value entries from a machine's shared storage.
+    ///
+    /// KV data is stored on an auto-syncing key/value store shared
+    /// between a machine and its manager. It has no meaning within
+    /// the context of vendimint - its meaning is up to the API caller.
+    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<Entry>> {
+        self.iroh_protocol.get_kv_entries(machine_id).await
     }
 }

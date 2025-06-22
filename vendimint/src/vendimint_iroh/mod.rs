@@ -1041,4 +1041,249 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_kv_api_basic_operations() -> anyhow::Result<()> {
+        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+
+        let machine_id = manager_protocol.list_machines()?[0].0;
+
+        // Test setting and getting a key/value pair
+        let key = b"test_key";
+        let value = b"test_value";
+
+        // Set value using machine protocol
+        machine_protocol.set_kv_value(key, value).await?;
+
+        // Get value using machine protocol
+        let entry = machine_protocol.get_kv_value(key).await?;
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+
+        // Verify entry metadata
+        assert_eq!(entry.content_len(), value.len() as u64);
+        assert_eq!(&entry.key()[2..], key); // Skip KV_PREFIX
+
+        // Get value using manager protocol
+        let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+
+        // Verify same metadata
+        assert_eq!(entry.content_len(), value.len() as u64);
+        assert_eq!(&entry.key()[2..], key); // Skip KV_PREFIX
+
+        // Test non-existent key
+        let entry = machine_protocol.get_kv_value(b"nonexistent").await?;
+        assert!(entry.is_none());
+
+        let entry = manager_protocol
+            .get_kv_value(&machine_id, b"nonexistent")
+            .await?;
+        assert!(entry.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_kv_empty_by_default() -> anyhow::Result<()> {
+        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+
+        let machine_id = manager_protocol.list_machines()?[0].0;
+
+        // KV store should be empty for new machines.
+        assert!(
+            machine_protocol
+                .get_kv_value(b"nonexistent")
+                .await?
+                .is_none()
+        );
+        assert!(
+            manager_protocol
+                .get_kv_value(&machine_id, b"nonexistent")
+                .await?
+                .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_kv_api_multiple_entries() -> anyhow::Result<()> {
+        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+
+        let machine_id = manager_protocol.list_machines()?[0].0;
+
+        // Set multiple key/value pairs
+        let test_data = vec![
+            (b"key1".as_slice(), b"value1".as_slice()),
+            (b"key2".as_slice(), b"value2".as_slice()),
+            (b"key3".as_slice(), b"value3".as_slice()),
+        ];
+
+        for (key, value) in &test_data {
+            machine_protocol.set_kv_value(key, value).await?;
+        }
+
+        // Brief wait to ensure all values are stored
+        tokio::time::sleep(IROH_WAIT_DELAY).await;
+
+        // Get all entries using machine protocol
+        let entries = machine_protocol.get_kv_entries().await?;
+        assert_eq!(entries.len(), test_data.len());
+
+        // Verify each entry metadata
+        for entry in &entries {
+            // Extract the user key (remove KV_PREFIX)
+            let user_key = &entry.key()[2..]; // Skip KV_PREFIX bytes
+
+            // Find the corresponding test data
+            let expected_value = test_data
+                .iter()
+                .find(|(key, _)| *key == user_key)
+                .map(|(_, value)| *value)
+                .expect("Entry key should match test data");
+
+            assert_eq!(entry.content_len(), expected_value.len() as u64);
+        }
+
+        // Get all entries using manager protocol
+        let entries = manager_protocol.get_kv_entries(&machine_id).await?;
+        assert_eq!(entries.len(), test_data.len());
+
+        // Verify we can retrieve individual entries via manager
+        for (key, value) in &test_data {
+            let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
+            assert!(entry.is_some());
+            assert_eq!(entry.unwrap().content_len(), value.len() as u64);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_kv_api_update_existing_key() -> anyhow::Result<()> {
+        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+
+        let machine_id = manager_protocol.list_machines()?[0].0;
+
+        let key = b"update_key";
+        let initial_value = b"initial_value";
+        let updated_value = b"new_updated_value_longer";
+
+        // Set initial value
+        machine_protocol.set_kv_value(key, initial_value).await?;
+
+        // Verify initial value
+        let entry = machine_protocol.get_kv_value(key).await?;
+        assert!(entry.is_some());
+        let initial_entry = entry.unwrap();
+        assert_eq!(initial_entry.content_len(), initial_value.len() as u64);
+        let initial_hash = initial_entry.content_hash();
+
+        // Wait for change to sync to manager.
+        wait_for_condition(
+            || async {
+                manager_protocol
+                    .get_kv_value(&machine_id, key)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            10,
+        )
+        .await?;
+
+        // Update value using manager protocol
+        manager_protocol
+            .set_kv_value(&machine_id, key, updated_value)
+            .await?;
+
+        // Verify value was updated via manager protocol (should see new content immediately)
+        let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
+        assert!(entry.is_some());
+        let updated_entry = entry.unwrap();
+        assert_eq!(updated_entry.content_len(), updated_value.len() as u64);
+        let updated_hash = updated_entry.content_hash();
+
+        // Content hash should be different (verifies update actually happened)
+        assert_ne!(initial_hash, updated_hash);
+
+        // Wait for update to sync to machine protocol
+        wait_for_condition(
+            || async {
+                if let Ok(Some(entry)) = machine_protocol.get_kv_value(key).await {
+                    entry.content_len() == updated_value.len() as u64
+                } else {
+                    false
+                }
+            },
+            DEFAULT_WAIT_ITERATIONS,
+        )
+        .await?;
+
+        // Verify update synced to machine protocol
+        let entry = machine_protocol.get_kv_value(key).await?;
+        assert!(entry.is_some());
+        let synced_entry = entry.unwrap();
+        assert_eq!(synced_entry.content_len(), updated_value.len() as u64);
+        assert_eq!(synced_entry.content_hash(), updated_hash);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_kv_api_namespace_isolation() -> anyhow::Result<()> {
+        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+
+        let machine_id = manager_protocol.list_machines()?[0].0;
+
+        // Set a KV entry
+        machine_protocol
+            .set_kv_value(b"test_key", b"test_value")
+            .await?;
+
+        // Set a machine config (different namespace)
+        let machine_config = create_test_machine_config();
+        manager_protocol
+            .set_machine_config(&machine_id, &machine_config)
+            .await?;
+
+        // Write a claimable contract (different namespace)
+        let (federation_id, claimable_contract) =
+            create_test_federation_id_and_claimable_contract();
+        machine_protocol
+            .write_payment_to_machine_doc(&federation_id, &claimable_contract)
+            .await?;
+
+        // KV entries should only return KV data, not config or contracts
+        let kv_entries = machine_protocol.get_kv_entries().await?;
+        assert_eq!(kv_entries.len(), 1);
+
+        // Verify the KV entry is correct
+        let entry = &kv_entries[0];
+        assert_eq!(entry.content_len(), b"test_value".len() as u64);
+
+        // Verify the user key (without prefix)
+        let user_key = &entry.key()[2..]; // Skip KV_PREFIX bytes
+        assert_eq!(user_key, b"test_key");
+
+        // Verify we can still access the machine config and contracts via their APIs
+        let config = machine_protocol.get_machine_config().await?;
+        assert!(config.is_some());
+
+        let contracts = manager_protocol.get_claimable_contracts().await?;
+        assert_eq!(contracts.len(), 1);
+
+        // KV operations should not interfere with other namespaces
+        let kv_entry = machine_protocol.get_kv_value(b"test_key").await?;
+        assert!(kv_entry.is_some());
+
+        Ok(())
+    }
 }
