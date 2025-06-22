@@ -46,12 +46,13 @@ impl Machine {
             MachineProtocol::new(&network_partitioned_storage_path.join(PROTOCOL_SUBDIR)).await?,
         );
 
-        let wallet = Arc::new(Wallet::new(
-            network_partitioned_storage_path.join(FEDIMINT_SUBDIR),
-            network,
-        )?);
-
-        wallet.connect_to_joined_federations().await?;
+        let wallet = Arc::new(
+            Wallet::new(
+                network_partitioned_storage_path.join(FEDIMINT_SUBDIR),
+                network,
+            )
+            .await?,
+        );
 
         let iroh_protocol_clone = iroh_protocol.clone();
         let wallet_clone = wallet.clone();

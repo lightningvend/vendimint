@@ -117,7 +117,7 @@ impl Drop for Wallet {
 }
 
 impl Wallet {
-    pub fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> std::io::Result<Self> {
+    pub async fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&fedimint_clients_data_dir)?;
 
         let (view_update_sender, view_update_receiver) = watch::channel(WalletView {
@@ -185,14 +185,18 @@ impl Wallet {
         let xprivkey = Xpriv::new_master(network, &mnemonic.to_seed_normalized(MNEMONIC_PASSWORD))
             .expect("Can never fail (see `new_master`'s implementation)");
 
-        Ok(Self {
+        let wallet = Self {
             derivable_secret: get_derivable_secret(&xprivkey),
             clients,
             fedimint_clients_data_dir: Mutex::from(fedimint_clients_data_dir),
             view_update_receiver,
             force_update_view_sender,
             view_update_task,
-        })
+        };
+
+        wallet.connect_to_joined_federations().await?;
+
+        Ok(wallet)
     }
 
     // TODO: Use this method or remove it.
@@ -230,7 +234,7 @@ impl Wallet {
         Some(lightning_module.get_public_key())
     }
 
-    pub async fn connect_to_joined_federations(&self) -> anyhow::Result<()> {
+    async fn connect_to_joined_federations(&self) -> anyhow::Result<()> {
         let fedimint_clients_data_dir = self.fedimint_clients_data_dir.lock().await;
 
         // List all files in the data directory.
