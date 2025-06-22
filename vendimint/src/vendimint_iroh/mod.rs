@@ -8,6 +8,8 @@ pub use shared::MachineConfig;
 
 #[cfg(test)]
 mod tests {
+    use crate::vendimint_iroh::shared::KV_PREFIX;
+
     use super::*;
 
     use anyhow::Context;
@@ -1063,7 +1065,7 @@ mod tests {
 
         // Verify entry metadata
         assert_eq!(entry.content_len(), value.len() as u64);
-        assert_eq!(&entry.key()[2..], key); // Skip KV_PREFIX
+        assert_eq!(&entry.key()[KV_PREFIX.len()..], key);
 
         // Get value using manager protocol
         let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
@@ -1072,7 +1074,7 @@ mod tests {
 
         // Verify same metadata
         assert_eq!(entry.content_len(), value.len() as u64);
-        assert_eq!(&entry.key()[2..], key); // Skip KV_PREFIX
+        assert_eq!(&entry.key()[KV_PREFIX.len()..], key);
 
         // Test non-existent key
         let entry = machine_protocol.get_kv_value(b"nonexistent").await?;
@@ -1138,7 +1140,7 @@ mod tests {
         // Verify each entry metadata
         for entry in &entries {
             // Extract the user key (remove KV_PREFIX)
-            let user_key = &entry.key()[2..]; // Skip KV_PREFIX bytes
+            let user_key = &entry.key()[KV_PREFIX.len()..];
 
             // Find the corresponding test data
             let expected_value = test_data
@@ -1270,7 +1272,7 @@ mod tests {
         assert_eq!(entry.content_len(), b"test_value".len() as u64);
 
         // Verify the user key (without prefix)
-        let user_key = &entry.key()[2..]; // Skip KV_PREFIX bytes
+        let user_key = &entry.key()[KV_PREFIX.len()..];
         assert_eq!(user_key, b"test_key");
 
         // Verify we can still access the machine config and contracts via their APIs

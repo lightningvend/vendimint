@@ -124,10 +124,16 @@ impl Manager {
         self.iroh_protocol.get_machine_config(machine_id).await
     }
 
-    /// Updates the default federation invite and configures all claimed machines.
+    // TODO: Remove old federations once all machines are updated.
+    // This will be a bit tricky, as machines will need to ack that
+    // they have updated their federation. Update the documentation
+    // here to reflect this. We should also remove old federations
+    // on the machines themselves.
+    /// Updates the default federation used for receiving payments.
     ///
-    /// This automatically syncs every claimed machine to the default federation
-    /// and must be called at least once for machines to accept payments.
+    /// All claimed machines are asynchronously synced to the federation.
+    /// A default federation must be set, and thus this must be called at
+    /// least once, for claimed machines to accept payments.
     pub async fn update_federation(&self, invite_code: InviteCode) -> anyhow::Result<()> {
         self.wallet
             .set_default_federation(invite_code.clone())
