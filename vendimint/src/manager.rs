@@ -4,7 +4,6 @@ use crate::fedimint_wallet::Wallet;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::ManagerProtocol;
 use bitcoin::Network;
-use bitcoin::secp256k1::PublicKey;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
@@ -57,6 +56,7 @@ impl Manager {
         let syncer_task_handle = tokio::task::spawn(async move {
             loop {
                 Self::sweep_payments(&iroh_protocol_clone, &wallet_clone).await;
+                Self::update_machine_configs(&iroh_protocol_clone, &wallet_clone).await;
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
@@ -123,29 +123,16 @@ impl Manager {
         self.iroh_protocol.get_machine_config(machine_id).await
     }
 
-    /// Sets the configuration for a specific machine.
-    // TODO: Make this private and automatically set machine
-    // configs, updating any time a new federation is joined.
-    pub async fn set_machine_config(
-        &self,
-        machine_id: &NodeId,
-        machine_config: &MachineConfig,
-    ) -> anyhow::Result<()> {
-        self.iroh_protocol
-            .set_machine_config(machine_id, machine_config)
-            .await
-    }
-
-    pub async fn join_federation(&self, invite_code: InviteCode) -> anyhow::Result<()> {
-        self.wallet.join_federation(invite_code).await
-    }
-
-    // TODO: Make this private and use it to generate machine configs.
-    pub async fn get_fedimint_lnv2_claim_pubkey(
-        &self,
-        federation_id: FederationId,
-    ) -> Option<PublicKey> {
-        self.wallet.get_lnv2_claim_pubkey(federation_id).await
+    /// Updates the default federation invite and configures all claimed machines.
+    ///
+    /// This automatically syncs every claimed machine to the default federation
+    /// and must be called at least once for machines to accept payments.
+    pub async fn update_federation(&self, invite_code: InviteCode) -> anyhow::Result<()> {
+        self.wallet
+            .set_default_federation(invite_code.clone())
+            .await?;
+        Self::update_machine_configs(&self.iroh_protocol, &self.wallet).await;
+        Ok(())
     }
 
     pub async fn get_local_balance(&self) -> Amount {
@@ -208,6 +195,44 @@ impl Manager {
                 .await;
 
             tracing::info!("Transferred {contract_count} payment(s) from iroh doc");
+        }
+    }
+
+    async fn update_machine_configs(manager_protocol: &Arc<ManagerProtocol>, wallet: &Arc<Wallet>) {
+        let Ok(Some(default_invite)) = wallet.get_default_federation().await else {
+            return;
+        };
+
+        let federation_id = default_invite.federation_id();
+
+        let Some(claimer_pk) = wallet.get_lnv2_claim_pubkey(federation_id).await else {
+            return;
+        };
+
+        let Ok(machines) = manager_protocol.list_machines() else {
+            return;
+        };
+
+        let new_config = MachineConfig {
+            federation_invite_code: default_invite,
+            claimer_pk,
+        };
+
+        for (machine_id, _) in machines {
+            let Ok(cfg) = manager_protocol.get_machine_config(&machine_id).await else {
+                continue;
+            };
+
+            let needs_update = match cfg {
+                Some(c) => c.federation_invite_code.federation_id() != federation_id,
+                None => true,
+            };
+
+            if needs_update {
+                let _ = manager_protocol
+                    .set_machine_config(&machine_id, &new_config)
+                    .await;
+            }
         }
     }
 }
