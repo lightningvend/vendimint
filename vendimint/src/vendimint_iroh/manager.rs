@@ -11,6 +11,7 @@ use iroh_docs::{
     Capability, DocTicket,
     protocol::Docs,
     store::{QueryBuilder, SingleLatestPerKeyQuery},
+    sync::Entry,
 };
 use std::{
     collections::HashMap,
@@ -22,8 +23,8 @@ use tokio::{io::AsyncWriteExt, sync::oneshot};
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol,
-    claim_pin_from_keying_material,
+    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, MACHINE_CONFIG_KEY, MachineConfig,
+    SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
@@ -297,6 +298,80 @@ impl ManagerProtocol {
 
     fn get_machine_doc_ticket_path(&self) -> PathBuf {
         self.app_storage_path.join(MACHINE_DOC_TICKETS_SUBDIR)
+    }
+
+    pub async fn get_kv_value(
+        &self,
+        machine_id: &NodeId,
+        key: impl AsRef<[u8]>,
+    ) -> anyhow::Result<Option<Entry>> {
+        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc = self
+            .docs
+            .client()
+            .open(machine_doc_ticket.capability.id())
+            .await?
+            .unwrap();
+
+        let mut full_key = KV_PREFIX.to_vec();
+        full_key.extend_from_slice(key.as_ref());
+
+        machine_doc
+            .get_one(QueryBuilder::<SingleLatestPerKeyQuery>::default().key_exact(full_key))
+            .await
+    }
+
+    pub async fn set_kv_value(
+        &self,
+        machine_id: &NodeId,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> anyhow::Result<()> {
+        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc = self
+            .docs
+            .client()
+            .open(machine_doc_ticket.capability.id())
+            .await?
+            .unwrap();
+
+        let mut full_key = KV_PREFIX.to_vec();
+        full_key.extend_from_slice(key.as_ref());
+
+        machine_doc
+            .set_bytes(
+                self.docs.client().authors().default().await?,
+                full_key,
+                value.as_ref().to_vec(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<Entry>> {
+        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc = self
+            .docs
+            .client()
+            .open(machine_doc_ticket.capability.id())
+            .await?
+            .unwrap();
+
+        let mut entries = Vec::new();
+        let mut entry_stream = machine_doc
+            .get_many(
+                QueryBuilder::<SingleLatestPerKeyQuery>::default()
+                    .key_prefix(KV_PREFIX)
+                    .build(),
+            )
+            .await?;
+
+        while let Some(entry_result) = entry_stream.next().await {
+            entries.push(entry_result?);
+        }
+
+        Ok(entries)
     }
 
     #[cfg(test)]

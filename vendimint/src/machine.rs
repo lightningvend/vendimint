@@ -9,6 +9,7 @@ use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
 use iroh::NodeAddr;
+use iroh_docs::sync::Entry;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::oneshot;
 
@@ -229,5 +230,36 @@ impl Machine {
 
             tracing::info!("Transferred {contract_count} payment(s) to iroh doc");
         }
+    }
+
+    /// Get a key/value entry from the machine's shared storage.
+    ///
+    /// KV data is stored on an auto-syncing key/value store shared
+    /// between a machine and its manager. It has no meaning within
+    /// the context of vendimint - its meaning is up to the API caller.
+    pub async fn get_kv_value(&self, key: impl AsRef<[u8]>) -> anyhow::Result<Option<Entry>> {
+        self.iroh_protocol.get_kv_value(key).await
+    }
+
+    /// Set a key/value entry in the machine's shared storage.
+    ///
+    /// KV data is stored on an auto-syncing key/value store shared
+    /// between a machine and its manager. It has no meaning within
+    /// the context of vendimint - its meaning is up to the API caller.
+    pub async fn set_kv_value(
+        &self,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> anyhow::Result<()> {
+        self.iroh_protocol.set_kv_value(key, value).await
+    }
+
+    /// Get all key/value entries from the machine's shared storage.
+    ///
+    /// KV data is stored on an auto-syncing key/value store shared
+    /// between a machine and its manager. It has no meaning within
+    /// the context of vendimint - its meaning is up to the API caller.
+    pub async fn get_kv_entries(&self) -> anyhow::Result<Vec<Entry>> {
+        self.iroh_protocol.get_kv_entries().await
     }
 }
