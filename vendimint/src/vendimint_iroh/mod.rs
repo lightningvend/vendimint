@@ -13,7 +13,7 @@ mod tests {
     use super::*;
 
     use anyhow::Context;
-    use futures;
+    use futures_util::future;
     use std::{str::FromStr, sync::Arc, time::Duration};
 
     use fedimint_core::{
@@ -819,8 +819,8 @@ mod tests {
             .iter()
             .map(|(_, protocol)| protocol.list_machines())
             .collect();
-        let machine_lists = futures::future::try_join_all(machine_count_futures).await?;
-        let machine_counts: Vec<usize> = machine_lists.iter().map(|list| list.len()).collect();
+        let machine_lists = future::try_join_all(machine_count_futures).await?;
+        let machine_counts: Vec<usize> = machine_lists.iter().map(std::vec::Vec::len).collect();
 
         let total_claims = machine_counts.iter().sum::<usize>();
         assert_eq!(
