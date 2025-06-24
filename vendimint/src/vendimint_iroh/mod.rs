@@ -13,6 +13,7 @@ mod tests {
     use super::*;
 
     use anyhow::Context;
+    use futures;
     use std::{str::FromStr, sync::Arc, time::Duration};
 
     use fedimint_core::{
@@ -207,7 +208,7 @@ mod tests {
         expected_count: usize,
     ) -> anyhow::Result<()> {
         wait_for_condition(
-            || async { manager_protocol.list_machines().unwrap().len() == expected_count },
+            || async { manager_protocol.list_machines().await.unwrap().len() == expected_count },
             DEFAULT_WAIT_ITERATIONS,
         )
         .await
@@ -230,7 +231,8 @@ mod tests {
         let machine_node_id = machine_protocol.node_addr().await.unwrap().node_id;
         assert!(
             manager_protocol
-                .list_machines()?
+                .list_machines()
+                .await?
                 .into_iter()
                 .any(|(pubkey, _)| pubkey == machine_node_id),
             "Manager should own the machine"
@@ -303,7 +305,7 @@ mod tests {
             create_claimed_machine_manager_pair().await?;
 
         assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
-        assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
+        assert_eq!(manager_protocol.list_machines().await.unwrap().len(), 1);
 
         Ok(())
     }
@@ -316,7 +318,7 @@ mod tests {
         assert_eq!(machine_protocol.get_machine_config().await?, None);
 
         let machine_config = create_test_machine_config();
-        let machine_id = manager_protocol.list_machines().unwrap()[0].0;
+        let machine_id = manager_protocol.list_machines().await.unwrap()[0].0;
 
         set_and_verify_machine_config(
             &machine_protocol,
@@ -409,7 +411,7 @@ mod tests {
             machine_protocol.get_manager_pubkey().await,
             Some(manager1_protocol.get_public_key().await?)
         );
-        assert_eq!(manager2_protocol.list_machines()?.len(), 0);
+        assert_eq!(manager2_protocol.list_machines().await?.len(), 0);
 
         Ok(())
     }
@@ -427,7 +429,7 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
         assert_eq!(machine_protocol.get_manager_pubkey().await, None);
-        assert_eq!(manager_protocol.list_machines()?.len(), 0);
+        assert_eq!(manager_protocol.list_machines().await?.len(), 0);
 
         // After rejection, another claim should be possible.
         let (_pin, machine_protocol, manager_protocol) =
@@ -436,7 +438,7 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
         assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
-        assert_eq!(manager_protocol.list_machines().unwrap().len(), 1);
+        assert_eq!(manager_protocol.list_machines().await.unwrap().len(), 1);
 
         Ok(())
     }
@@ -458,7 +460,7 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
         assert_eq!(machine_protocol.get_manager_pubkey().await, None);
-        assert_eq!(manager1_protocol.list_machines()?.len(), 0);
+        assert_eq!(manager1_protocol.list_machines().await?.len(), 0);
 
         // Second manager should be able to claim, since the first claim was aborted
         let (_pin, machine_protocol, manager2_protocol) =
@@ -467,7 +469,7 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
         assert_machine_claimed_by_manager(&machine_protocol, &manager2_protocol).await?;
-        assert_eq!(manager2_protocol.list_machines().unwrap().len(), 1);
+        assert_eq!(manager2_protocol.list_machines().await.unwrap().len(), 1);
 
         Ok(())
     }
@@ -519,7 +521,7 @@ mod tests {
         let manager_storage_path = tempfile::tempdir()?;
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
-        let machines = manager_protocol.list_machines()?;
+        let machines = manager_protocol.list_machines().await?;
         assert!(machines.is_empty(), "New manager should have no machines");
 
         Ok(())
@@ -813,10 +815,12 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY * 10).await;
 
         // Exactly one manager should have successfully claimed the machine
-        let machine_counts: Vec<usize> = manager_results
+        let machine_count_futures: Vec<_> = manager_results
             .iter()
-            .map(|(_, protocol)| protocol.list_machines().unwrap().len())
+            .map(|(_, protocol)| protocol.list_machines())
             .collect();
+        let machine_lists = futures::future::try_join_all(machine_count_futures).await?;
+        let machine_counts: Vec<usize> = machine_lists.iter().map(|list| list.len()).collect();
 
         let total_claims = machine_counts.iter().sum::<usize>();
         assert_eq!(
@@ -867,7 +871,7 @@ mod tests {
         let (_machine_protocol, manager_protocol, _machine_temp, manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Set a machine config
         let machine_config = create_test_machine_config();
@@ -883,7 +887,7 @@ mod tests {
         let manager_protocol = ManagerProtocol::new(manager_temp.path()).await?;
 
         // Should still have the machine
-        let machines = manager_protocol.list_machines()?;
+        let machines = manager_protocol.list_machines().await?;
         assert_eq!(machines.len(), 1);
         assert_eq!(machines[0].0, machine_id);
 
@@ -1002,7 +1006,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Initially no config
         assert_eq!(machine_protocol.get_machine_config().await?, None);
@@ -1049,7 +1053,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Test setting and getting a key/value pair
         let key = b"test_key";
@@ -1093,7 +1097,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // KV store should be empty for new machines.
         assert!(
@@ -1117,7 +1121,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Set multiple key/value pairs
         let test_data = vec![
@@ -1171,7 +1175,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         let key = b"update_key";
         let initial_value = b"initial_value";
@@ -1243,7 +1247,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        let machine_id = manager_protocol.list_machines()?[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Set a KV entry
         machine_protocol
