@@ -29,6 +29,10 @@ const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 /// the machine that the manager would like to claim it.
 pub const PING_MAGIC_BYTES: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
 
+const IROH_SUBDIR: &str = "iroh";
+const APP_SUBDIR: &str = "app";
+const SECRET_KEY_FILE: &str = "secret.key";
+
 /// A machine's configuration, which determines how funds are received.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub struct MachineConfig {
@@ -36,9 +40,60 @@ pub struct MachineConfig {
     pub claimer_pk: PublicKey,
 }
 
-const IROH_SUBDIR: &str = "iroh";
-const APP_SUBDIR: &str = "app";
-const SECRET_KEY_FILE: &str = "secret.key";
+/// A key/value pair in the per-machine shared KV store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KvEntry {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub author: KvEntryAuthor,
+    pub timestamp: u64,
+}
+
+/// Indicates whether a [`KvEntry`] was written by the machine or its manager.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KvEntryAuthor {
+    Manager,
+    Machine,
+}
+
+impl KvEntry {
+    pub(crate) async fn from_iroh_entry(
+        entry: iroh_docs::sync::Entry,
+        reader_device: KvEntryAuthor,
+        blobs: &iroh_blobs::net_protocol::Blobs<iroh_blobs::store::fs::Store>,
+        docs: &iroh_docs::protocol::Docs<iroh_blobs::store::fs::Store>,
+    ) -> anyhow::Result<Self> {
+        let value = blobs.client().read_to_bytes(entry.content_hash()).await?;
+
+        let full_key = entry.key();
+        let user_key = if full_key.starts_with(&KV_PREFIX) {
+            full_key[KV_PREFIX.len()..].to_vec()
+        } else {
+            full_key.to_vec()
+        };
+
+        // Determine the original author of the entry.
+        // Only two devices can write to a given KV store: a machine
+        // and its manager. If the current device didn't originally
+        // create the entry, then the other device must have.
+        let author = if entry.author() == docs.client().authors().default().await? {
+            reader_device
+        } else {
+            // The author must be the opposite of `reader_device`.
+            match reader_device {
+                KvEntryAuthor::Machine => KvEntryAuthor::Manager,
+                KvEntryAuthor::Manager => KvEntryAuthor::Machine,
+            }
+        };
+
+        Ok(Self {
+            key: user_key,
+            value: value.to_vec(),
+            author,
+            timestamp: entry.timestamp(),
+        })
+    }
+}
 
 pub struct SharedProtocol {
     pub router_builder: RouterBuilder,

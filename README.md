@@ -4,6 +4,8 @@ A rust crate that provides a simple API for building applications that need to r
 
 ## Architecture
 
+TODO: Flesh out the documentation of the crate's architecture.
+
 The vendimint API is fairly simple. It provides two different device types, machines and managers. A machine is a device/application that receives funds, such as a vending machine or point-of-sale device. A manager is a device/application that manages one or more machines and is able to sweep funds received by them. Machines begin as unclaimed and unconfigured. They must be claimed by a manager, at which point the manager will automatically configure them, which gives them the details required to start receiving payments.
 
 Vendimint uses [Fedimint](https://fedimint.org/) to process payments (as the name suggests), and [Iroh](https://iroh.computer/) for the peer-to-peer networking layer between machines and managers. By relying on the uptime of the user's federation of choice, and of Iroh's hosted relays, vendimint machines and managers are able to operate without the need for any additional hosted infrastructure.
@@ -17,6 +19,22 @@ As mentioned above, [Fedimint](https://fedimint.org/) is used as the underlying 
 3. Anyone with the secret key corresponding to `claim_pk` can now claim the funds from the contract
 
 For normal lightning receives, steps 1 and 3 are performed by the same device. In vendimint, step 1 is performed by a machine and step 3 is performed by its manager.
+
+### Key-Value Store Interface
+
+Vendimint provides a shared key-value store between machines and their managers for application-specific data exchange. The KV interface includes:
+
+- **`KvEntry`** - Represents a key-value pair with metadata including the author (which device wrote it) and timestamp
+- **`KvEntryAuthor`** - Enum indicating whether an entry was written by the `Machine` or `Manager`
+
+Both machines and managers can read and write arbitrary key-value data that automatically syncs between the paired devices whenever both are online. This enables use cases such as:
+
+- Machines reporting status information to managers
+- Managers sending configuration updates to machines
+- Sharing application state between devices
+- Implementing custom protocols on top of the vendimint transport layer
+
+The KV store operates independently of payment processing, uses the same secure peer-to-peer networking layer, and can contain arbitrary binary data for keys and values. However, no guarantees are made as to the consistency of the KV store between a machine and its manager, or the order in which entries sync between them.
 
 ## Project Structure
 
