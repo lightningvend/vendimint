@@ -5,4 +5,4 @@ mod vendimint_iroh;
 
 pub use machine::Machine;
 pub use manager::Manager;
-pub use vendimint_iroh::MachineConfig;
+pub use vendimint_iroh::{KvEntry, KvEntryAuthor, MachineConfig};

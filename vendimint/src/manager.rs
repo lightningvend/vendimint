@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use crate::fedimint_wallet::Wallet;
+use crate::vendimint_iroh::KvEntry;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::ManagerProtocol;
 use bitcoin::Network;
@@ -8,7 +9,6 @@ use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
 use iroh::{NodeAddr, NodeId};
-use iroh_docs::sync::Entry;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
@@ -255,7 +255,7 @@ impl Manager {
         &self,
         machine_id: &NodeId,
         key: impl AsRef<[u8]>,
-    ) -> anyhow::Result<Option<Entry>> {
+    ) -> anyhow::Result<Option<KvEntry>> {
         self.iroh_protocol.get_kv_value(machine_id, key).await
     }
 
@@ -280,7 +280,7 @@ impl Manager {
     /// KV data is stored on an auto-syncing key/value store shared
     /// between a machine and its manager. It has no meaning within
     /// the context of vendimint - its meaning is up to the API caller.
-    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<Entry>> {
+    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<KvEntry>> {
         self.iroh_protocol.get_kv_entries(machine_id).await
     }
 }

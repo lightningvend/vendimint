@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use crate::fedimint_wallet::Wallet;
+use crate::vendimint_iroh::KvEntry;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::MachineProtocol;
 use bitcoin::Network;
@@ -9,7 +10,6 @@ use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
 use iroh::NodeAddr;
-use iroh_docs::sync::Entry;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::oneshot;
 
@@ -239,7 +239,7 @@ impl Machine {
     /// KV data is stored on an auto-syncing key/value store shared
     /// between a machine and its manager. It has no meaning within
     /// the context of vendimint - its meaning is up to the API caller.
-    pub async fn get_kv_value(&self, key: impl AsRef<[u8]>) -> anyhow::Result<Option<Entry>> {
+    pub async fn get_kv_value(&self, key: impl AsRef<[u8]>) -> anyhow::Result<Option<KvEntry>> {
         self.iroh_protocol.get_kv_value(key).await
     }
 
@@ -261,7 +261,7 @@ impl Machine {
     /// KV data is stored on an auto-syncing key/value store shared
     /// between a machine and its manager. It has no meaning within
     /// the context of vendimint - its meaning is up to the API caller.
-    pub async fn get_kv_entries(&self) -> anyhow::Result<Vec<Entry>> {
+    pub async fn get_kv_entries(&self) -> anyhow::Result<Vec<KvEntry>> {
         self.iroh_protocol.get_kv_entries().await
     }
 }
