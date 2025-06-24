@@ -118,7 +118,7 @@ impl Drop for Wallet {
 
 impl Wallet {
     pub async fn new(fedimint_clients_data_dir: PathBuf, network: Network) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(&fedimint_clients_data_dir)?;
+        tokio::fs::create_dir_all(&fedimint_clients_data_dir).await?;
 
         let (view_update_sender, view_update_receiver) = watch::channel(WalletView {
             federations: BTreeMap::new(),
@@ -174,12 +174,12 @@ impl Wallet {
 
         let mnemonic_path = fedimint_clients_data_dir.join(MNEMONIC_PATH);
 
-        if !std::fs::exists(&mnemonic_path)? {
+        if !tokio::fs::try_exists(&mnemonic_path).await? {
             let mnemonic = bip39::Mnemonic::generate(12).expect("12-word mnemonics are valid");
-            std::fs::write(&mnemonic_path, mnemonic.to_string())?;
+            tokio::fs::write(&mnemonic_path, mnemonic.to_string()).await?;
         }
 
-        let mnemonic_string = std::fs::read_to_string(&mnemonic_path)?;
+        let mnemonic_string = tokio::fs::read_to_string(&mnemonic_path).await?;
         let mnemonic = bip39::Mnemonic::from_str(&mnemonic_string).expect("Valid mnemonic");
 
         let xprivkey = Xpriv::new_master(network, &mnemonic.to_seed_normalized(MNEMONIC_PASSWORD))
@@ -238,17 +238,15 @@ impl Wallet {
         let fedimint_clients_data_dir = self.fedimint_clients_data_dir.lock().await;
 
         // List all files in the data directory.
-        let federation_ids = std::fs::read_dir(fedimint_clients_data_dir.as_path())?
-            .filter_map(|entry| {
-                entry.ok().and_then(|entry| {
-                    entry
-                        .file_name()
-                        .into_string()
-                        .ok()
-                        .and_then(|federation_id| federation_id.parse().ok())
-                })
-            })
-            .collect::<Vec<FederationId>>();
+        let mut read_dir = tokio::fs::read_dir(fedimint_clients_data_dir.as_path()).await?;
+        let mut federation_ids = Vec::<FederationId>::new();
+        while let Some(entry) = read_dir.next_entry().await? {
+            if let Ok(federation_id_str) = entry.file_name().into_string() {
+                if let Ok(federation_id) = federation_id_str.parse() {
+                    federation_ids.push(federation_id);
+                }
+            }
+        }
 
         let mut clients = self.clients.write().await;
 
@@ -296,10 +294,11 @@ impl Wallet {
         }
 
         // Record the default federation invite code on disk
-        std::fs::write(
+        tokio::fs::write(
             fedimint_clients_data_dir.join(DEFAULT_FEDERATION_PATH),
             invite_code.to_string(),
-        )?;
+        )
+        .await?;
 
         Ok(())
     }
@@ -312,7 +311,7 @@ impl Wallet {
             return Ok(None);
         }
 
-        let invite_str = std::fs::read_to_string(default_path)?;
+        let invite_str = tokio::fs::read_to_string(default_path).await?;
         match invite_str.trim().parse() {
             Ok(invite) => Ok(Some(invite)),
             Err(e) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
@@ -346,7 +345,7 @@ impl Wallet {
             let federation_data_dir = fedimint_clients_data_dir.join(federation_id.to_string());
 
             if federation_data_dir.is_dir() {
-                std::fs::remove_dir_all(federation_data_dir)?;
+                tokio::fs::remove_dir_all(federation_data_dir).await?;
             }
         }
 

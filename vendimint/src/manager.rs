@@ -106,10 +106,11 @@ impl Manager {
     }
 
     /// Lists the node IDs of all machines claimed by this manager.
-    pub fn list_machine_ids(&self) -> std::io::Result<Vec<NodeId>> {
+    pub async fn list_machine_ids(&self) -> std::io::Result<Vec<NodeId>> {
         Ok(self
             .iroh_protocol
-            .list_machines()?
+            .list_machines()
+            .await?
             .into_iter()
             .map(|(machine_id, _)| machine_id)
             .collect())
@@ -217,7 +218,7 @@ impl Manager {
             return;
         };
 
-        let Ok(machines) = manager_protocol.list_machines() else {
+        let Ok(machines) = manager_protocol.list_machines().await else {
             return;
         };
 

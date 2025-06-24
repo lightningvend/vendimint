@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
             // TODO: Wait more intelligently.
             tokio::time::sleep(Duration::from_secs(5)).await;
 
-            let machine_ids = manager.list_machine_ids()?;
+            let machine_ids = manager.list_machine_ids().await?;
 
             assert_eq!(machine_ids.len(), 1);
 

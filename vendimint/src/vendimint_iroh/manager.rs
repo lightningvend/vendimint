@@ -49,7 +49,9 @@ impl ManagerProtocol {
 
         // Ensure the machine doc tickets directory exists.
         let machine_doc_tickets_path = manager_protocol.get_machine_doc_ticket_path();
-        std::fs::create_dir_all(&machine_doc_tickets_path).unwrap();
+        tokio::fs::create_dir_all(&machine_doc_tickets_path)
+            .await
+            .unwrap();
 
         Ok(manager_protocol)
     }
@@ -101,10 +103,11 @@ impl ManagerProtocol {
                         {
                             if matches!(machine_doc_ticket.capability, Capability::Write(_)) {
                                 let _ = docs.client().import(machine_doc_ticket.clone()).await;
-                                let _ = std::fs::write(
+                                let _ = tokio::fs::write(
                                     machine_doc_ticket_path.join(machine_id.to_string()),
                                     serde_json::to_string(&machine_doc_ticket).unwrap(),
-                                );
+                                )
+                                .await;
                             }
                         }
                     }
@@ -120,25 +123,25 @@ impl ManagerProtocol {
         Ok((pin, tx))
     }
 
-    fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
+    async fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
         let machine_doc_ticket_path = self
             .get_machine_doc_ticket_path()
             .join(machine_id.to_string());
-        let machine_doc_ticket_str = std::fs::read_to_string(&machine_doc_ticket_path)?;
+        let machine_doc_ticket_str = tokio::fs::read_to_string(&machine_doc_ticket_path).await?;
         let machine_doc_ticket: DocTicket = serde_json::from_str(&machine_doc_ticket_str)?;
         Ok(machine_doc_ticket)
     }
 
-    pub fn list_machines(&self) -> std::io::Result<Vec<(NodeId, DocTicket)>> {
+    pub async fn list_machines(&self) -> std::io::Result<Vec<(NodeId, DocTicket)>> {
         let machine_doc_tickets_path = self.get_machine_doc_ticket_path();
         let mut machines = Vec::new();
 
-        for entry in std::fs::read_dir(machine_doc_tickets_path)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
+        let mut read_dir = tokio::fs::read_dir(machine_doc_tickets_path).await?;
+        while let Some(entry) = read_dir.next_entry().await? {
+            if entry.file_type().await?.is_file() {
                 let file_name = entry.file_name().into_string().unwrap();
                 let machine_id = NodeId::from_str(&file_name).unwrap();
-                let machine_doc_ticket_str = std::fs::read_to_string(entry.path())?;
+                let machine_doc_ticket_str = tokio::fs::read_to_string(entry.path()).await?;
                 let machine_doc_ticket: DocTicket =
                     serde_json::from_str(&machine_doc_ticket_str).unwrap();
                 machines.push((machine_id, machine_doc_ticket));
@@ -152,7 +155,7 @@ impl ManagerProtocol {
         &self,
         machine_id: &NodeId,
     ) -> anyhow::Result<Option<MachineConfig>> {
-        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
             .client()
@@ -184,7 +187,7 @@ impl ManagerProtocol {
         machine_id: &NodeId,
         machine_config: &MachineConfig,
     ) -> anyhow::Result<()> {
-        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
             .client()
@@ -206,7 +209,7 @@ impl ManagerProtocol {
     ) -> anyhow::Result<Vec<(NodeId, FederationId, ClaimableContract)>> {
         let mut payments = Vec::new();
 
-        for (machine_id, machine_doc_ticket) in self.list_machines()? {
+        for (machine_id, machine_doc_ticket) in self.list_machines().await? {
             let machine_doc = self
                 .docs
                 .client()
@@ -275,7 +278,7 @@ impl ManagerProtocol {
             });
 
         for (machine_id, contracts) in claimable_contracts_by_machine_id {
-            let machine_doc_ticket = self.get_machine(&machine_id)?;
+            let machine_doc_ticket = self.get_machine(&machine_id).await?;
             let machine_doc = self
                 .docs
                 .client()
@@ -305,7 +308,7 @@ impl ManagerProtocol {
         machine_id: &NodeId,
         key: impl AsRef<[u8]>,
     ) -> anyhow::Result<Option<Entry>> {
-        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
             .client()
@@ -327,7 +330,7 @@ impl ManagerProtocol {
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> anyhow::Result<()> {
-        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
             .client()
@@ -350,7 +353,7 @@ impl ManagerProtocol {
     }
 
     pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<Entry>> {
-        let machine_doc_ticket = self.get_machine(machine_id)?;
+        let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
             .client()
