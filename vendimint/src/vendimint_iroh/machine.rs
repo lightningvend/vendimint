@@ -104,7 +104,9 @@ impl ProtocolHandler for ClaimHandler {
                 let manager_public_key_path =
                     this.app_storage_path.join(MACHINE_MANAGER_PUBLIC_KEY_PATH);
                 let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey).unwrap();
-                std::fs::write(&manager_public_key_path, claimer_pubkey_str).unwrap();
+                tokio::fs::write(&manager_public_key_path, claimer_pubkey_str)
+                    .await
+                    .unwrap();
                 *claimed_manager_pubkey_lock = Some(claimer_pubkey);
                 drop(claimed_manager_pubkey_lock);
 
@@ -132,7 +134,7 @@ impl MachineProtocol {
             .join(MACHINE_MANAGER_PUBLIC_KEY_PATH);
 
         let manager_public_key_or: Option<PublicKey> =
-            match std::fs::read_to_string(&manager_public_key_path) {
+            match tokio::fs::read_to_string(&manager_public_key_path).await {
                 Ok(manager_public_key_str) => serde_json::from_str(&manager_public_key_str).ok(),
                 Err(_) => None,
             };
@@ -289,11 +291,11 @@ async fn get_or_create_machine_doc(
     app_storage_path: &Path,
     docs: &Docs<iroh_blobs::store::fs::Store>,
 ) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
-    std::fs::create_dir_all(app_storage_path).unwrap();
+    tokio::fs::create_dir_all(app_storage_path).await.unwrap();
 
     let doc_ticket_path = app_storage_path.join(MACHINE_DOC_TICKET_PATH);
 
-    let doc_ticket_or: Option<DocTicket> = match std::fs::read_to_string(&doc_ticket_path) {
+    let doc_ticket_or: Option<DocTicket> = match tokio::fs::read_to_string(&doc_ticket_path).await {
         Ok(doc_ticket_str) => serde_json::from_str(&doc_ticket_str).ok(),
         Err(_) => None,
     };
@@ -311,7 +313,9 @@ async fn get_or_create_machine_doc(
     // Save the doc ticket to a file for later use.
     let new_doc_ticket = new_doc.share(ShareMode::Write, AddrInfoOptions::Id).await?;
     let new_doc_ticket_str = serde_json::to_string(&new_doc_ticket).unwrap();
-    std::fs::write(&doc_ticket_path, new_doc_ticket_str).unwrap();
+    tokio::fs::write(&doc_ticket_path, new_doc_ticket_str)
+        .await
+        .unwrap();
 
     Ok(new_doc)
 }

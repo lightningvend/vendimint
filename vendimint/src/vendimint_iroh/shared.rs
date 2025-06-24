@@ -49,12 +49,12 @@ pub struct SharedProtocol {
 impl SharedProtocol {
     pub async fn new(storage_path: &Path) -> anyhow::Result<Self> {
         let secret_key_path = storage_path.join(SECRET_KEY_FILE);
-        let secret_key = if let Ok(key_str) = std::fs::read_to_string(&secret_key_path) {
+        let secret_key = if let Ok(key_str) = tokio::fs::read_to_string(&secret_key_path).await {
             SecretKey::from_str(key_str.trim())?
         } else {
             let key = SecretKey::generate(OsRng);
-            std::fs::create_dir_all(storage_path).unwrap();
-            std::fs::write(&secret_key_path, key.to_string())?;
+            tokio::fs::create_dir_all(storage_path).await.unwrap();
+            tokio::fs::write(&secret_key_path, key.to_string()).await?;
             key
         };
 
@@ -70,8 +70,8 @@ impl SharedProtocol {
         let iroh_storage_path = storage_path.join(IROH_SUBDIR);
         let app_storage_path = storage_path.join(APP_SUBDIR);
 
-        std::fs::create_dir_all(&iroh_storage_path).unwrap();
-        std::fs::create_dir_all(&app_storage_path).unwrap();
+        tokio::fs::create_dir_all(&iroh_storage_path).await.unwrap();
+        tokio::fs::create_dir_all(&app_storage_path).await.unwrap();
 
         let blobs = Blobs::persistent(&iroh_storage_path)
             .await?
