@@ -55,13 +55,23 @@ sh ./scripts/tests/protocol-tests.sh
 
 ## Architecture
 
-The vendimint API provides just three exported types:
-
-- [`Machine`](https://docs.rs/vendimint/latest/vendimint/struct.Machine.html)
-- [`MachineConfig`](https://docs.rs/vendimint/latest/vendimint/struct.MachineConfig.html)
-- [`Manager`](https://docs.rs/vendimint/latest/vendimint/struct.Manager.html)
-
 A machine refers to a device/application that receives funds, such as a vending machine or point-of-sale device. A manager refers to a device/application that manages one or more machines and is able to sweep funds received by them. A machine config is a struct that can be set by a manager for each machine, which includes details required for a machine to start receiving payments.
+
+### Key-Value Store Interface
+
+Vendimint provides a shared key-value store between machines and their managers for application-specific data exchange. The KV interface includes:
+
+- **`KvEntry`** - Represents a key-value pair with metadata including the author (which device wrote it) and timestamp
+- **`KvEntryAuthor`** - Enum indicating whether an entry was written by the `Machine` or `Manager`
+
+Both machines and managers can read and write arbitrary key-value data that automatically syncs between the paired devices. This enables use cases such as:
+
+- Machines reporting status information to managers
+- Managers sending configuration updates to machines
+- Sharing application state between devices
+- Implementing custom protocols on top of the vendimint transport layer
+
+The KV store operates independently of payment processing, uses the same secure peer-to-peer networking layer, and can contain arbitrary binary data for keys and values. However, no guarantees are made as to the consistency of the KV store between a machine and its manager, or the order in which entries sync between them.
 
 As the name suggests, vendimint uses [Fedimint](https://fedimint.org/) to process payments. It uses [Iroh](https://iroh.computer/) for the peer-to-peer networking layer between machines and managers. By relying on the user's federation of choice, and Iroh's hosted relays, vendimint is able to operate without the need for the user hosting any of their own infrastructure.
 

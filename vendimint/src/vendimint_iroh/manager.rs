@@ -11,7 +11,6 @@ use iroh_docs::{
     Capability, DocTicket,
     protocol::Docs,
     store::{QueryBuilder, SingleLatestPerKeyQuery},
-    sync::Entry,
 };
 use std::{
     collections::HashMap,
@@ -23,8 +22,8 @@ use tokio::{io::AsyncWriteExt, sync::oneshot};
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, MACHINE_CONFIG_KEY, MachineConfig,
-    SharedProtocol, claim_pin_from_keying_material,
+    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY,
+    MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
@@ -307,7 +306,7 @@ impl ManagerProtocol {
         &self,
         machine_id: &NodeId,
         key: impl AsRef<[u8]>,
-    ) -> anyhow::Result<Option<Entry>> {
+    ) -> anyhow::Result<Option<KvEntry>> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
@@ -319,9 +318,17 @@ impl ManagerProtocol {
         let mut full_key = KV_PREFIX.to_vec();
         full_key.extend_from_slice(key.as_ref());
 
-        machine_doc
+        let Some(entry) = machine_doc
             .get_one(QueryBuilder::<SingleLatestPerKeyQuery>::default().key_exact(full_key))
-            .await
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            KvEntry::from_iroh_entry(entry, KvEntryAuthor::Manager, &self.blobs, &self.docs)
+                .await?,
+        ))
     }
 
     pub async fn set_kv_value(
@@ -352,7 +359,7 @@ impl ManagerProtocol {
         Ok(())
     }
 
-    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<Entry>> {
+    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<KvEntry>> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
@@ -371,7 +378,15 @@ impl ManagerProtocol {
             .await?;
 
         while let Some(entry_result) = entry_stream.next().await {
-            entries.push(entry_result?);
+            entries.push(
+                KvEntry::from_iroh_entry(
+                    entry_result?,
+                    KvEntryAuthor::Manager,
+                    &self.blobs,
+                    &self.docs,
+                )
+                .await?,
+            );
         }
 
         Ok(entries)
