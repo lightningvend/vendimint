@@ -103,10 +103,10 @@ impl ProtocolHandler for ClaimHandler {
 
                 let manager_public_key_path =
                     this.app_storage_path.join(MACHINE_MANAGER_PUBLIC_KEY_PATH);
-                let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey).unwrap();
+                let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize claimer pubkey: {}", e))?;
                 tokio::fs::write(&manager_public_key_path, claimer_pubkey_str)
-                    .await
-                    .unwrap();
+                    .await?;
                 *claimed_manager_pubkey_lock = Some(claimer_pubkey);
                 drop(claimed_manager_pubkey_lock);
 
@@ -291,7 +291,7 @@ async fn get_or_create_machine_doc(
     app_storage_path: &Path,
     docs: &Docs<iroh_blobs::store::fs::Store>,
 ) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
-    tokio::fs::create_dir_all(app_storage_path).await.unwrap();
+    tokio::fs::create_dir_all(app_storage_path).await?;
 
     let doc_ticket_path = app_storage_path.join(MACHINE_DOC_TICKET_PATH);
 
@@ -304,18 +304,18 @@ async fn get_or_create_machine_doc(
         return docs
             .client()
             .open(doc_ticket.capability.id())
-            .await
-            .map(|doc_or| doc_or.unwrap());
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Failed to open document"));
     }
 
     let new_doc = docs.client().create().await?;
 
     // Save the doc ticket to a file for later use.
     let new_doc_ticket = new_doc.share(ShareMode::Write, AddrInfoOptions::Id).await?;
-    let new_doc_ticket_str = serde_json::to_string(&new_doc_ticket).unwrap();
+    let new_doc_ticket_str = serde_json::to_string(&new_doc_ticket)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize doc ticket: {}", e))?;
     tokio::fs::write(&doc_ticket_path, new_doc_ticket_str)
-        .await
-        .unwrap();
+        .await?;
 
     Ok(new_doc)
 }
@@ -326,7 +326,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_machine_protocol() -> anyhow::Result<()> {
-        let storage_path = tempfile::tempdir().unwrap();
+        let storage_path = tempfile::tempdir()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))?;
         let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
 
         let node_addr = machine_protocol.node_addr().await?;

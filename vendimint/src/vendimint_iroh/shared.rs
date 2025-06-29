@@ -53,7 +53,7 @@ impl SharedProtocol {
             SecretKey::from_str(key_str.trim())?
         } else {
             let key = SecretKey::generate(OsRng);
-            tokio::fs::create_dir_all(storage_path).await.unwrap();
+            tokio::fs::create_dir_all(storage_path).await?;
             tokio::fs::write(&secret_key_path, key.to_string()).await?;
             key
         };
@@ -70,8 +70,8 @@ impl SharedProtocol {
         let iroh_storage_path = storage_path.join(IROH_SUBDIR);
         let app_storage_path = storage_path.join(APP_SUBDIR);
 
-        tokio::fs::create_dir_all(&iroh_storage_path).await.unwrap();
-        tokio::fs::create_dir_all(&app_storage_path).await.unwrap();
+        tokio::fs::create_dir_all(&iroh_storage_path).await?;
+        tokio::fs::create_dir_all(&app_storage_path).await?;
 
         let blobs = Blobs::persistent(&iroh_storage_path)
             .await?
@@ -119,8 +119,10 @@ impl SharedProtocol {
             return Err(anyhow::anyhow!("Invalid key prefix"));
         }
 
-        let federation_id_bytes: [u8; 32] = key[2..34].try_into().unwrap();
-        let contract_id_hash_bytes: [u8; 32] = key[34..66].try_into().unwrap();
+        let federation_id_bytes: [u8; 32] = key[2..34].try_into()
+            .map_err(|_| anyhow::anyhow!("Failed to parse federation_id bytes"))?;
+        let contract_id_hash_bytes: [u8; 32] = key[34..66].try_into()
+            .map_err(|_| anyhow::anyhow!("Failed to parse contract_id_hash bytes"))?;
 
         let federation_id = FederationId(*bitcoin::hashes::sha256::Hash::from_bytes_ref(
             &federation_id_bytes,
