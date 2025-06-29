@@ -208,7 +208,7 @@ mod tests {
         expected_count: usize,
     ) -> anyhow::Result<()> {
         wait_for_condition(
-            || async { manager_protocol.list_machines().await.unwrap().len() == expected_count },
+            || async { manager_protocol.list_machines().await.map_or(false, |machines| machines.len() == expected_count) },
             DEFAULT_WAIT_ITERATIONS,
         )
         .await
@@ -228,7 +228,7 @@ mod tests {
         );
 
         // Assert the manager sees the machine as its machine.
-        let machine_node_id = machine_protocol.node_addr().await.unwrap().node_id;
+        let machine_node_id = machine_protocol.node_addr().await?.node_id;
         assert!(
             manager_protocol
                 .list_machines()
@@ -305,7 +305,7 @@ mod tests {
             create_claimed_machine_manager_pair().await?;
 
         assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
-        assert_eq!(manager_protocol.list_machines().await.unwrap().len(), 1);
+        assert_eq!(manager_protocol.list_machines().await?.len(), 1);
 
         Ok(())
     }
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(machine_protocol.get_machine_config().await?, None);
 
         let machine_config = create_test_machine_config();
-        let machine_id = manager_protocol.list_machines().await.unwrap()[0].0;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
 
         set_and_verify_machine_config(
             &machine_protocol,
@@ -438,7 +438,7 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
         assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
-        assert_eq!(manager_protocol.list_machines().await.unwrap().len(), 1);
+        assert_eq!(manager_protocol.list_machines().await?.len(), 1);
 
         Ok(())
     }
@@ -469,7 +469,7 @@ mod tests {
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
         assert_machine_claimed_by_manager(&machine_protocol, &manager2_protocol).await?;
-        assert_eq!(manager2_protocol.list_machines().await.unwrap().len(), 1);
+        assert_eq!(manager2_protocol.list_machines().await?.len(), 1);
 
         Ok(())
     }
@@ -1029,8 +1029,7 @@ mod tests {
         // Update the config with different claimer key
         let new_pk = fedimint_core::secp256k1::PublicKey::from_str(
             "02e7798ad2ded4e6dbc6a5a6a891dcb577dadf96842fe500ac46ed5f623aa9042b",
-        )
-        .unwrap();
+        )?;
 
         let updated_config = MachineConfig {
             federation_invite_code: InviteCode::from_str(TEST_FEDERATION_INVITE_CODE)?,
@@ -1065,7 +1064,7 @@ mod tests {
         // Get value using machine protocol
         let entry = machine_protocol.get_kv_value(key).await?;
         assert!(entry.is_some());
-        let entry = entry.unwrap();
+        let entry = entry.ok_or_else(|| anyhow::anyhow!("Expected entry to be Some"))?;
 
         // Verify entry metadata
         assert_eq!(entry.content_len(), value.len() as u64);
@@ -1074,7 +1073,7 @@ mod tests {
         // Get value using manager protocol
         let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
         assert!(entry.is_some());
-        let entry = entry.unwrap();
+        let entry = entry.ok_or_else(|| anyhow::anyhow!("Expected entry to be Some"))?;
 
         // Verify same metadata
         assert_eq!(entry.content_len(), value.len() as u64);
@@ -1164,7 +1163,7 @@ mod tests {
         for (key, value) in &test_data {
             let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
             assert!(entry.is_some());
-            assert_eq!(entry.unwrap().content_len(), value.len() as u64);
+            assert_eq!(entry.ok_or_else(|| anyhow::anyhow!("Expected entry to be Some"))?.content_len(), value.len() as u64);
         }
 
         Ok(())
@@ -1187,7 +1186,7 @@ mod tests {
         // Verify initial value
         let entry = machine_protocol.get_kv_value(key).await?;
         assert!(entry.is_some());
-        let initial_entry = entry.unwrap();
+        let initial_entry = entry.ok_or_else(|| anyhow::anyhow!("Expected entry to be Some"))?;
         assert_eq!(initial_entry.content_len(), initial_value.len() as u64);
         let initial_hash = initial_entry.content_hash();
 
@@ -1197,8 +1196,7 @@ mod tests {
                 manager_protocol
                     .get_kv_value(&machine_id, key)
                     .await
-                    .unwrap()
-                    .is_some()
+                    .map_or(false, |entry| entry.is_some())
             },
             10,
         )
@@ -1212,7 +1210,7 @@ mod tests {
         // Verify value was updated via manager protocol (should see new content immediately)
         let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
         assert!(entry.is_some());
-        let updated_entry = entry.unwrap();
+        let updated_entry = entry.ok_or_else(|| anyhow::anyhow!("Expected entry to be Some"))?;
         assert_eq!(updated_entry.content_len(), updated_value.len() as u64);
         let updated_hash = updated_entry.content_hash();
 
@@ -1235,7 +1233,7 @@ mod tests {
         // Verify update synced to machine protocol
         let entry = machine_protocol.get_kv_value(key).await?;
         assert!(entry.is_some());
-        let synced_entry = entry.unwrap();
+        let synced_entry = entry.ok_or_else(|| anyhow::anyhow!("Expected entry to be Some"))?;
         assert_eq!(synced_entry.content_len(), updated_value.len() as u64);
         assert_eq!(synced_entry.content_hash(), updated_hash);
 

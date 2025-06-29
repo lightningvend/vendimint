@@ -19,8 +19,8 @@ async fn main() -> anyhow::Result<()> {
             fed.pegin_gateways(
                 1_000_000,
                 vec![
-                    dev_fed.gw_lnd().await.unwrap(),
-                    dev_fed.gw_ldk().await.unwrap(),
+                    dev_fed.gw_lnd().await?,
+                    dev_fed.gw_ldk().await?,
                 ],
             )
             .await?;
@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
                 manager.claim_machine(machine.node_addr().await?).await?;
 
             let (machine_claim_pin, machine_claim_accepter) =
-                machine.await_next_incoming_claim_request().await.unwrap();
+                machine.await_next_incoming_claim_request().await.ok_or_else(|| anyhow::anyhow!("No incoming claim request"))?;
 
             assert_eq!(machine_claim_pin, manager_claim_pin);
             assert!(machine_claim_accepter.send(true).is_ok());
@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
             // Wait for manager to auto-configure the machine.
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let machine_config = machine.get_machine_config().await?.unwrap();
+            let machine_config = machine.get_machine_config().await?.ok_or_else(|| anyhow::anyhow!("No machine config"))?;
             assert_eq!(
                 machine_config.federation_invite_code,
                 federation_invite_code
