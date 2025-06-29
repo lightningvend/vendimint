@@ -18,10 +18,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Pegging in gateways...");
             fed.pegin_gateways(
                 1_000_000,
-                vec![
-                    dev_fed.gw_lnd().await.unwrap(),
-                    dev_fed.gw_ldk().await.unwrap(),
-                ],
+                vec![dev_fed.gw_lnd().await?, dev_fed.gw_ldk().await?],
             )
             .await?;
 
