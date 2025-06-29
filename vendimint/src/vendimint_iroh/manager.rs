@@ -48,9 +48,7 @@ impl ManagerProtocol {
 
         // Ensure the machine doc tickets directory exists.
         let machine_doc_tickets_path = manager_protocol.get_machine_doc_ticket_path();
-        tokio::fs::create_dir_all(&machine_doc_tickets_path)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&machine_doc_tickets_path).await?;
 
         Ok(manager_protocol)
     }
@@ -197,7 +195,7 @@ impl ManagerProtocol {
             .set_bytes(
                 self.docs.client().authors().default().await?,
                 MACHINE_CONFIG_KEY.to_bytes(),
-                serde_json::to_vec(machine_config).unwrap(),
+                serde_json::to_vec(machine_config)?,
             )
             .await?;
         Ok(())
