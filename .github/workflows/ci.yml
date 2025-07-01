@@ -7,20 +7,58 @@ on:
     branches: [master]
 
 jobs:
-  build:
+  create-runner:
+    name: Create Hetzner Cloud runner
     runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.create-hcloud-runner.outputs.label }}
+      server_id: ${{ steps.create-hcloud-runner.outputs.server_id }}
+    steps:
+      - name: Create runner
+        id: create-hcloud-runner
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cx52
+
+  build:
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    env:
+      HOME: /root
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Apt Get Update
-        run: sudo apt-get update
-      - name: Install Protobuf Compiler
-        run: sudo apt-get install -y protobuf-compiler
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v14
+        with:
+          name: tvolk131
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - name: Format
-        run: cargo fmt --all --check
+        run: nix develop --command cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: nix develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
-        run: cargo build --workspace --all-targets --locked
-      - name: Test
-        run: cargo test --workspace --locked
+        run: nix develop --command cargo build --workspace --all-targets --locked
+      - name: Unit Tests
+        run: nix develop --command cargo test --workspace --locked
+      - name: Devimint Tests
+        run: nix develop --command sh ./scripts/tests/protocol-tests.sh
+
+  delete-runner:
+    name: Delete Hetzner Cloud runner
+    needs:
+      - create-runner
+      - build
+    runs-on: ubuntu-latest
+    if: ${{ always() }} # Required to stop the runner even if the error happened in the previous jobs.
+    steps:
+      - name: Delete runner
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          name: ${{ needs.create-runner.outputs.label }}
+          server_id: ${{ needs.create-runner.outputs.server_id }}
