@@ -51,7 +51,7 @@ To run the full protocol integration tests (devimint tests), use the provided sc
 sh ./scripts/tests/protocol-tests.sh
 ```
 
-**Important Note**: The CI system doesn't use Nix yet and doesn't run the `protocol-tests.sh` script. Please run this script locally to ensure all tests are passing before submitting changes. Sadly, the test is a bit flaky right now, so you may need to retry a few times. If it passes once for a given commit, that's good enough.
+I've found the test to be slightly flakey, so you may need to retry a few times. If it passes once for a given commit, the code is almost certainly fine.
 
 ## Architecture
 
