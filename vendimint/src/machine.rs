@@ -16,6 +16,7 @@ use tokio::sync::oneshot;
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
 
+/// A device/application that receives funds (e.g., vending machine, point-of-sale).
 pub struct Machine {
     iroh_protocol: Arc<MachineProtocol>,
     wallet: Arc<Wallet>,
@@ -114,7 +115,7 @@ impl Machine {
         self.iroh_protocol.node_addr().await
     }
 
-    /// Gets the machine's configuration, as set by [`crate::Manager::set_machine_config`].
+    /// Gets the machine's configuration, which is automatically configured by its manager.
     /// Returns `Some` if the machine is configured, `None` otherwise.
     pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
         self.iroh_protocol.get_machine_config().await
