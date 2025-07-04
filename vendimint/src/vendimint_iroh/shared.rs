@@ -29,6 +29,7 @@ const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 /// the machine that the manager would like to claim it.
 pub const PING_MAGIC_BYTES: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
 
+/// A machine's configuration, which determines how funds are received.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub struct MachineConfig {
     pub federation_invite_code: InviteCode,

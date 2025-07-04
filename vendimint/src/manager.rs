@@ -15,6 +15,7 @@ use tokio::sync::oneshot;
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
 
+/// A device/application that manages machines and sweeps received funds.
 pub struct Manager {
     iroh_protocol: Arc<ManagerProtocol>,
     wallet: Arc<Wallet>,
