@@ -102,10 +102,8 @@ impl ProtocolHandler for ClaimHandler {
 
                 let manager_public_key_path =
                     this.app_storage_path.join(MACHINE_MANAGER_PUBLIC_KEY_PATH);
-                let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey).unwrap();
-                tokio::fs::write(&manager_public_key_path, claimer_pubkey_str)
-                    .await
-                    .unwrap();
+                let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey)?;
+                tokio::fs::write(&manager_public_key_path, claimer_pubkey_str).await?;
                 *claimed_manager_pubkey_lock = Some(claimer_pubkey);
                 drop(claimed_manager_pubkey_lock);
 
@@ -307,7 +305,7 @@ async fn get_or_create_machine_doc(
     app_storage_path: &Path,
     docs: &Docs<iroh_blobs::store::fs::Store>,
 ) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
-    tokio::fs::create_dir_all(app_storage_path).await.unwrap();
+    tokio::fs::create_dir_all(app_storage_path).await?;
 
     let doc_ticket_path = app_storage_path.join(MACHINE_DOC_TICKET_PATH);
 
@@ -328,10 +326,8 @@ async fn get_or_create_machine_doc(
 
     // Save the doc ticket to a file for later use.
     let new_doc_ticket = new_doc.share(ShareMode::Write, AddrInfoOptions::Id).await?;
-    let new_doc_ticket_str = serde_json::to_string(&new_doc_ticket).unwrap();
-    tokio::fs::write(&doc_ticket_path, new_doc_ticket_str)
-        .await
-        .unwrap();
+    let new_doc_ticket_str = serde_json::to_string(&new_doc_ticket)?;
+    tokio::fs::write(&doc_ticket_path, new_doc_ticket_str).await?;
 
     Ok(new_doc)
 }
