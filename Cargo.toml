@@ -14,8 +14,6 @@ nursery = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 large_futures = "allow"
 missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-must_use_candidate = "allow"
 option_if_let_else = "allow"
 significant_drop_tightening = "allow"
 
