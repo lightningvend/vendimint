@@ -49,8 +49,7 @@ impl ManagerProtocol {
 
         // Ensure the machine doc tickets directory exists.
         let machine_doc_tickets_path = manager_protocol.get_machine_doc_ticket_path();
-        tokio::fs::create_dir_all(&machine_doc_tickets_path)
-            .await?;
+        tokio::fs::create_dir_all(&machine_doc_tickets_path).await?;
 
         Ok(manager_protocol)
     }
