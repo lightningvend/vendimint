@@ -12,7 +12,7 @@ Vendimint uses [Fedimint](https://fedimint.org/) to process payments (as the nam
 
 ### How Payments Work
 
-As mentioned above, [Fedimint](https://fedimint.org/) is used as the underlying lightning payment processor. Fedimint's lightning module allows for funds to be locked into a contract that, once funded via a lightning gateway, can only be redeemed by possessing a private key that is specified at contract creation.
+As mentioned above, [Fedimint](https://fedimint.org/) is used as the underlying lightning payment processor. Fedimint's lightning module allows for funds to be locked into a contract that, once funded via a lightning gateway, can only be redeemed by possessing a private key that is specified at contract creation. Here are the three steps that an incoming lightning payment follows, from the federation's perspective:
 
 1. An unfunded lightning receive contract is created in the federation, and a `claim_pk` is specified (along with some other data that isn't relevant here)
 2. The contract is funded by a lightning gateway in exchange for the invoice's pre-image, which is decrypted by the federation
