@@ -229,7 +229,7 @@ impl Wallet {
 
         let client = clients.get(&federation_id)?;
 
-        let lightning_module = client.get_first_module::<LightningClientModule>()?;
+        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
         Some(lightning_module.get_public_key())
     }
@@ -400,8 +400,7 @@ impl Wallet {
             .get(&federation_id)
             .ok_or_else(|| anyhow::anyhow!("Client for federation {} not found", federation_id))?;
 
-        let lightning_module = client.get_first_module::<LightningClientModule>()
-            .ok_or_else(|| anyhow::anyhow!("Lightning module not found"))?;
+        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
         Ok(lightning_module
             .remote_receive(claimer_pk, amount, expiry_secs, description, gateway)
@@ -416,8 +415,7 @@ impl Wallet {
 
         for client in clients.values() {
             if client.operation_exists(operation_id).await {
-                let lightning_module = client.get_first_module::<LightningClientModule>()
-                    .ok_or_else(|| anyhow::anyhow!("Lightning module not found"))?;
+                let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
                 return lightning_module.await_remote_receive(operation_id).await;
             }
@@ -453,8 +451,7 @@ impl Wallet {
             .get(&federation_id)
             .ok_or_else(|| anyhow::anyhow!("Client for federation {} not found", federation_id))?;
 
-        let mint_module = client.get_first_module::<MintClientModule>()
-            .ok_or_else(|| anyhow::anyhow!("Mint module not found"))?;
+        let mint_module = client.get_first_module::<MintClientModule>().unwrap();
 
         let ecash_balance = mint_module
             .get_note_counts_by_denomination(
@@ -502,7 +499,7 @@ impl Wallet {
 
         let client = clients.get(&federation_id)?;
 
-        let lightning_module = client.get_first_module::<LightningClientModule>()?;
+        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
         let contracts = lightning_module
             .get_claimable_contracts(claimer_pk, limit_or)
@@ -522,9 +519,7 @@ impl Wallet {
             return;
         };
 
-        let Some(lightning_module) = client.get_first_module::<LightningClientModule>() else {
-            return;
-        };
+        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
         lightning_module
             .remove_claimed_contracts(contract_ids)
@@ -542,8 +537,7 @@ impl Wallet {
             return Err(anyhow::anyhow!("Client not found"));
         };
 
-        let lightning_module = client.get_first_module::<LightningClientModule>()
-            .ok_or_else(|| anyhow::anyhow!("Lightning module not found"))?;
+        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
         lightning_module.claim_contract(claimable_contract).await
     }

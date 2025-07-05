@@ -102,13 +102,11 @@ impl ManagerProtocol {
                         {
                             if matches!(machine_doc_ticket.capability, Capability::Write(_)) {
                                 let _ = docs.client().import(machine_doc_ticket.clone()).await;
-                                if let Ok(serialized_ticket) = serde_json::to_string(&machine_doc_ticket) {
-                                    let _ = tokio::fs::write(
-                                        machine_doc_ticket_path.join(machine_id.to_string()),
-                                        serialized_ticket,
-                                    )
-                                    .await;
-                                }
+                                let _ = tokio::fs::write(
+                                    machine_doc_ticket_path.join(machine_id.to_string()),
+                                    serde_json::to_string(&machine_doc_ticket).unwrap(),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -140,14 +138,11 @@ impl ManagerProtocol {
         let mut read_dir = tokio::fs::read_dir(machine_doc_tickets_path).await?;
         while let Some(entry) = read_dir.next_entry().await? {
             if entry.file_type().await?.is_file() {
-                let file_name = entry.file_name().into_string()
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid filename"))?;
-                let machine_id = NodeId::from_str(&file_name)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Invalid NodeId: {}", e)))?;
+                let file_name = entry.file_name().into_string().unwrap();
+                let machine_id = NodeId::from_str(&file_name).unwrap();
                 let machine_doc_ticket_str = tokio::fs::read_to_string(entry.path()).await?;
                 let machine_doc_ticket: DocTicket =
-                    serde_json::from_str(&machine_doc_ticket_str)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Invalid JSON: {}", e)))?;
+                    serde_json::from_str(&machine_doc_ticket_str).unwrap();
                 machines.push((machine_id, machine_doc_ticket));
             }
         }
@@ -165,7 +160,7 @@ impl ManagerProtocol {
             .client()
             .open(machine_doc_ticket.capability.id())
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+            .unwrap();
 
         let Some(entry) = machine_doc
             .get_one(
@@ -197,13 +192,12 @@ impl ManagerProtocol {
             .client()
             .open(machine_doc_ticket.capability.id())
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+            .unwrap();
         machine_doc
             .set_bytes(
                 self.docs.client().authors().default().await?,
                 MACHINE_CONFIG_KEY.to_bytes(),
-                serde_json::to_vec(machine_config)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize machine config: {}", e))?,
+                serde_json::to_vec(machine_config)?,
             )
             .await?;
         Ok(())
@@ -220,7 +214,7 @@ impl ManagerProtocol {
                 .client()
                 .open(machine_doc_ticket.capability.id())
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+                .unwrap();
 
             let mut contract_stream = machine_doc
                 .get_many(
@@ -289,7 +283,7 @@ impl ManagerProtocol {
                 .client()
                 .open(machine_doc_ticket.capability.id())
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+                .unwrap();
 
             for (federation_id, claimable_contract) in contracts {
                 let key = SharedProtocol::create_claimable_contract_machine_doc_key(
@@ -319,7 +313,7 @@ impl ManagerProtocol {
             .client()
             .open(machine_doc_ticket.capability.id())
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+            .unwrap();
 
         let mut full_key = KV_PREFIX.to_vec();
         full_key.extend_from_slice(key.as_ref());
@@ -341,7 +335,7 @@ impl ManagerProtocol {
             .client()
             .open(machine_doc_ticket.capability.id())
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+            .unwrap();
 
         let mut full_key = KV_PREFIX.to_vec();
         full_key.extend_from_slice(key.as_ref());
@@ -364,7 +358,7 @@ impl ManagerProtocol {
             .client()
             .open(machine_doc_ticket.capability.id())
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to open machine document"))?;
+            .unwrap();
 
         let mut entries = Vec::new();
         let mut entry_stream = machine_doc

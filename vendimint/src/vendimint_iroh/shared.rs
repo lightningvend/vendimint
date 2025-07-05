@@ -119,10 +119,8 @@ impl SharedProtocol {
             return Err(anyhow::anyhow!("Invalid key prefix"));
         }
 
-        let federation_id_bytes: [u8; 32] = key[2..34].try_into()
-            .map_err(|_| anyhow::anyhow!("Failed to parse federation_id bytes"))?;
-        let contract_id_hash_bytes: [u8; 32] = key[34..66].try_into()
-            .map_err(|_| anyhow::anyhow!("Failed to parse contract_id_hash bytes"))?;
+        let federation_id_bytes: [u8; 32] = key[2..34].try_into()?;
+        let contract_id_hash_bytes: [u8; 32] = key[34..66].try_into()?;
 
         let federation_id = FederationId(*bitcoin::hashes::sha256::Hash::from_bytes_ref(
             &federation_id_bytes,
