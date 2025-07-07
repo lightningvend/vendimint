@@ -1171,9 +1171,6 @@ mod tests {
             machine_protocol.set_kv_value(key, value).await?;
         }
 
-        // Brief wait to ensure all values are stored
-        tokio::time::sleep(IROH_WAIT_DELAY).await;
-
         // Get all entries using machine protocol
         let entries = machine_protocol.get_kv_entries().await?;
         assert_eq!(entries.len(), test_data.len());
@@ -1189,6 +1186,8 @@ mod tests {
 
             assert_eq!(entry.value, expected_value);
         }
+
+        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
 
         // Get all entries using manager protocol
         let entries = manager_protocol.get_kv_entries(&machine_id).await?;
