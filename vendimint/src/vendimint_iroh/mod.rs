@@ -26,6 +26,11 @@ mod tests {
     const DEFAULT_WAIT_ITERATIONS: u32 = 10;
     const TEST_FEDERATION_INVITE_CODE: &str = "fed11qgqpcxnhwden5te0vejkg6tdd9h8gepwd4cxcuewvdshx6p0qvqjpypneenvnkhq0actdl9e4l72ah5gel78dylu5wkc9d3kyy52f62asrl562";
 
+    // K/V test constants
+    const TEST_KEY: &[u8] = b"test_key";
+    const TEST_VALUE: &[u8] = b"test_value";
+    const NONEXISTENT_KEY: &[u8] = b"nonexistent_key";
+
     /// Helper to create a machine and manager protocol pair with temp directories
     ///
     /// NOTE: The `TempDir` objects MUST be returned and kept alive by the caller!
@@ -1090,39 +1095,35 @@ mod tests {
 
         let machine_id = manager_protocol.list_machines().await?[0].0;
 
-        // Test setting and getting a key/value pair
-        let key = b"test_key";
-        let value = b"test_value";
-
         // Set value using machine protocol
-        machine_protocol.set_kv_value(key, value).await?;
+        machine_protocol.set_kv_value(TEST_KEY, TEST_VALUE).await?;
 
         // Get value using machine protocol
-        let entry = machine_protocol.get_kv_value(key).await?;
+        let entry = machine_protocol.get_kv_value(TEST_KEY).await?;
         assert!(entry.is_some());
         let entry = entry.unwrap();
 
         // Verify entry content
-        assert_eq!(entry.value, value);
-        assert_eq!(entry.key, key);
+        assert_eq!(entry.value, TEST_VALUE);
+        assert_eq!(entry.key, TEST_KEY);
 
         wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
 
         // Get value using manager protocol
-        let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
+        let entry = manager_protocol.get_kv_value(&machine_id, TEST_KEY).await?;
         assert!(entry.is_some());
         let entry = entry.unwrap();
 
         // Verify same content
-        assert_eq!(entry.value, value);
-        assert_eq!(entry.key, key);
+        assert_eq!(entry.value, TEST_VALUE);
+        assert_eq!(entry.key, TEST_KEY);
 
         // Test non-existent key
-        let entry = machine_protocol.get_kv_value(b"nonexistent").await?;
+        let entry = machine_protocol.get_kv_value(NONEXISTENT_KEY).await?;
         assert!(entry.is_none());
 
         let entry = manager_protocol
-            .get_kv_value(&machine_id, b"nonexistent")
+            .get_kv_value(&machine_id, NONEXISTENT_KEY)
             .await?;
         assert!(entry.is_none());
 
@@ -1139,13 +1140,13 @@ mod tests {
         // KV store should be empty for new machines.
         assert!(
             machine_protocol
-                .get_kv_value(b"nonexistent")
+                .get_kv_value(NONEXISTENT_KEY)
                 .await?
                 .is_none()
         );
         assert!(
             manager_protocol
-                .get_kv_value(&machine_id, b"nonexistent")
+                .get_kv_value(&machine_id, NONEXISTENT_KEY)
                 .await?
                 .is_none()
         );
@@ -1260,9 +1261,7 @@ mod tests {
         let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Set a KV entry
-        machine_protocol
-            .set_kv_value(b"test_key", b"test_value")
-            .await?;
+        machine_protocol.set_kv_value(TEST_KEY, TEST_VALUE).await?;
 
         // Set a machine config (different namespace)
         let machine_config = create_test_machine_config();
@@ -1285,9 +1284,9 @@ mod tests {
 
         // Verify the KV entry is correct
         let entry = &kv_entries[0];
-        assert_eq!(entry.value, b"test_value");
+        assert_eq!(entry.value, TEST_VALUE);
 
-        assert_eq!(entry.key, b"test_key");
+        assert_eq!(entry.key, TEST_KEY);
 
         // Verify we can still access the machine config and contracts via their APIs
         let config = machine_protocol.get_machine_config().await?;
@@ -1297,7 +1296,7 @@ mod tests {
         assert_eq!(contracts.len(), 1);
 
         // KV operations should not interfere with other namespaces
-        let kv_entry = machine_protocol.get_kv_value(b"test_key").await?;
+        let kv_entry = machine_protocol.get_kv_value(TEST_KEY).await?;
         assert!(kv_entry.is_some());
 
         Ok(())
