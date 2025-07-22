@@ -19,6 +19,7 @@ mod tests {
     };
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use fedimint_lnv2_remote_client::ClaimableContract;
+    use iroh::NodeId;
     use tokio::time::Instant;
     use tpe::{AggregatePublicKey, G1Affine};
 
@@ -108,43 +109,6 @@ mod tests {
         ))
     }
 
-    /// Helper to wait for KV entries to be synchronized between machine and manager protocols
-    async fn wait_for_kv_entries_sync(
-        machine_protocol: &MachineProtocol,
-        manager_protocol: &ManagerProtocol,
-    ) -> anyhow::Result<()> {
-        let machine_id = machine_protocol.node_addr().await?.node_id;
-
-        wait_for_condition(
-            || async {
-                let machine_entries = machine_protocol.get_kv_entries().await;
-                let manager_entries = manager_protocol.get_kv_entries(&machine_id).await;
-
-                let (Ok(mut machine_kv), Ok(mut manager_kv)) = (machine_entries, manager_entries)
-                else {
-                    return false;
-                };
-
-                // Sort both entry lists to ensure consistent comparison.
-                machine_kv.sort_by(|a, b| a.key.cmp(&b.key));
-                manager_kv.sort_by(|a, b| a.key.cmp(&b.key));
-
-                // Compare length first for efficiency.
-                if machine_kv.len() != manager_kv.len() {
-                    return false;
-                }
-
-                // Compare each entry.
-                machine_kv
-                    .iter()
-                    .zip(manager_kv.iter())
-                    .all(|(m, mg)| m == mg)
-            },
-            DEFAULT_WAIT_ITERATIONS,
-        )
-        .await
-    }
-
     /// Helper to create a machine-manager pair that are paired and ready for testing.
     ///
     /// This combines the common pattern of creating protocols, performing a claim,
@@ -175,7 +139,97 @@ mod tests {
         ))
     }
 
-    /// Helper to create test claimable contract
+    /// Test fixture for K/V tests that provides common setup and helper methods.
+    struct KvTestFixture {
+        machine_protocol: MachineProtocol,
+        manager_protocol: ManagerProtocol,
+        machine_id: NodeId,
+
+        /// Held to prevent the tempdir from being deleted.
+        _machine_temp: tempfile::TempDir,
+
+        /// Held to prevent the tempdir from being deleted.
+        _manager_temp: tempfile::TempDir,
+    }
+
+    impl KvTestFixture {
+        async fn new() -> anyhow::Result<Self> {
+            let (machine_protocol, manager_protocol, machine_temp, manager_temp) =
+                create_claimed_machine_manager_pair().await?;
+            let machine_id = manager_protocol.list_machines().await?[0].0;
+
+            Ok(Self {
+                machine_protocol,
+                manager_protocol,
+                machine_id,
+                _machine_temp: machine_temp,
+                _manager_temp: manager_temp,
+            })
+        }
+
+        async fn verify_entry(
+            &self,
+            key: &[u8],
+            expected_value: &[u8],
+            expected_author: KvEntryAuthor,
+        ) -> anyhow::Result<()> {
+            // Make sure all KV entries are synced before checking.
+            self.wait_for_kv_entries_sync().await?;
+
+            // Check via machine protocol.
+            let entry = self.machine_protocol.get_kv_value(key).await?;
+            assert!(entry.is_some());
+            let entry = entry.unwrap();
+            assert_eq!(entry.value, expected_value);
+            assert_eq!(entry.author, expected_author);
+
+            // Check via manager protocol.
+            let entry = self
+                .manager_protocol
+                .get_kv_value(&self.machine_id, key)
+                .await?;
+            assert!(entry.is_some());
+            let entry = entry.unwrap();
+            assert_eq!(entry.value, expected_value);
+            assert_eq!(entry.author, expected_author);
+
+            Ok(())
+        }
+
+        async fn wait_for_kv_entries_sync(&self) -> anyhow::Result<()> {
+            wait_for_condition(
+                || async {
+                    let machine_entries = self.machine_protocol.get_kv_entries().await;
+                    let manager_entries =
+                        self.manager_protocol.get_kv_entries(&self.machine_id).await;
+
+                    let (Ok(mut machine_kv), Ok(mut manager_kv)) =
+                        (machine_entries, manager_entries)
+                    else {
+                        return false;
+                    };
+
+                    // Sort both entry lists to ensure consistent comparison.
+                    machine_kv.sort_by(|a, b| a.key.cmp(&b.key));
+                    manager_kv.sort_by(|a, b| a.key.cmp(&b.key));
+
+                    // Compare length first for efficiency.
+                    if machine_kv.len() != manager_kv.len() {
+                        return false;
+                    }
+
+                    // Compare each entry.
+                    machine_kv
+                        .iter()
+                        .zip(manager_kv.iter())
+                        .all(|(m, mg)| m == mg)
+                },
+                DEFAULT_WAIT_ITERATIONS,
+            )
+            .await
+        }
+    }
+
     fn create_test_federation_id_and_claimable_contract() -> (FederationId, ClaimableContract) {
         let pk = get_test_public_key();
         let federation_id = FederationId::dummy();
@@ -1090,63 +1144,45 @@ mod tests {
 
     #[tokio::test]
     async fn test_kv_basic_operations() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
+        let fixture = KvTestFixture::new().await?;
 
-        let machine_id = manager_protocol.list_machines().await?[0].0;
-
-        // Set value using machine protocol
-        machine_protocol.set_kv_value(TEST_KEY, TEST_VALUE).await?;
-
-        // Get value using machine protocol
-        let entry = machine_protocol.get_kv_value(TEST_KEY).await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-
-        // Verify entry content
-        assert_eq!(entry.value, TEST_VALUE);
-        assert_eq!(entry.key, TEST_KEY);
-
-        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
-
-        // Get value using manager protocol
-        let entry = manager_protocol.get_kv_value(&machine_id, TEST_KEY).await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-
-        // Verify same content
-        assert_eq!(entry.value, TEST_VALUE);
-        assert_eq!(entry.key, TEST_KEY);
-
-        // Test non-existent key
-        let entry = machine_protocol.get_kv_value(NONEXISTENT_KEY).await?;
-        assert!(entry.is_none());
-
-        let entry = manager_protocol
-            .get_kv_value(&machine_id, NONEXISTENT_KEY)
+        // Test setting and getting a key/value pair
+        fixture
+            .machine_protocol
+            .set_kv_value(TEST_KEY, TEST_VALUE)
             .await?;
-        assert!(entry.is_none());
+        fixture
+            .verify_entry(TEST_KEY, TEST_VALUE, KvEntryAuthor::Machine)
+            .await?;
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_kv_empty_by_default() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
-
-        let machine_id = manager_protocol.list_machines().await?[0].0;
-
-        // KV store should be empty for new machines.
         assert!(
-            machine_protocol
+            fixture
+                .machine_protocol
                 .get_kv_value(NONEXISTENT_KEY)
                 .await?
                 .is_none()
         );
         assert!(
-            manager_protocol
-                .get_kv_value(&machine_id, NONEXISTENT_KEY)
+            fixture
+                .manager_protocol
+                .get_kv_value(&fixture.machine_id, NONEXISTENT_KEY)
+                .await?
+                .is_none()
+        );
+
+        // KV store is empty by default for new machines.
+        let fresh_fixture = KvTestFixture::new().await?;
+        assert!(
+            fresh_fixture
+                .machine_protocol
+                .get_kv_value(TEST_KEY)
+                .await?
+                .is_none()
+        );
+        assert!(
+            fresh_fixture
+                .manager_protocol
+                .get_kv_value(&fresh_fixture.machine_id, TEST_KEY)
                 .await?
                 .is_none()
         );
@@ -1156,24 +1192,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_kv_multiple_entries() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
+        let fixture = KvTestFixture::new().await?;
 
-        let machine_id = manager_protocol.list_machines().await?[0].0;
-
-        // Set multiple key/value pairs
-        let test_data = vec![
+        let test_data = [
             (b"key1".as_slice(), b"value1".as_slice()),
             (b"key2".as_slice(), b"value2".as_slice()),
             (b"key3".as_slice(), b"value3".as_slice()),
         ];
 
-        for (key, value) in &test_data {
-            machine_protocol.set_kv_value(key, value).await?;
+        for (key, value) in test_data {
+            fixture.machine_protocol.set_kv_value(key, value).await?;
         }
 
         // Get all entries using machine protocol
-        let entries = machine_protocol.get_kv_entries().await?;
+        let entries = fixture.machine_protocol.get_kv_entries().await?;
         assert_eq!(entries.len(), test_data.len());
 
         // Verify each entry content
@@ -1188,17 +1220,20 @@ mod tests {
             assert_eq!(entry.value, expected_value);
         }
 
-        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
+        fixture.wait_for_kv_entries_sync().await?;
 
         // Get all entries using manager protocol
-        let entries = manager_protocol.get_kv_entries(&machine_id).await?;
+        let entries = fixture
+            .manager_protocol
+            .get_kv_entries(&fixture.machine_id)
+            .await?;
         assert_eq!(entries.len(), test_data.len());
 
         // Verify we can retrieve individual entries via manager
         for (key, value) in &test_data {
-            let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
-            assert!(entry.is_some());
-            assert_eq!(entry.unwrap().value, *value);
+            fixture
+                .verify_entry(key, value, KvEntryAuthor::Machine)
+                .await?;
         }
 
         Ok(())
@@ -1206,97 +1241,78 @@ mod tests {
 
     #[tokio::test]
     async fn test_kv_update_existing_key() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
-
-        let machine_id = manager_protocol.list_machines().await?[0].0;
-
         let key = b"update_key";
         let initial_value = b"initial_value";
         let updated_value = b"new_updated_value_longer";
 
-        // Set initial value
-        machine_protocol.set_kv_value(key, initial_value).await?;
+        let fixture = KvTestFixture::new().await?;
 
-        // Verify initial value
-        let entry = machine_protocol.get_kv_value(key).await?;
-        assert!(entry.is_some());
-        let initial_entry = entry.unwrap();
-        assert_eq!(initial_entry.value, initial_value);
-        assert_eq!(initial_entry.author, KvEntryAuthor::Machine);
-
-        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
-
-        // Update value using manager protocol
-        manager_protocol
-            .set_kv_value(&machine_id, key, updated_value)
+        fixture
+            .machine_protocol
+            .set_kv_value(key, initial_value)
             .await?;
 
-        // Verify value was updated via manager protocol
-        let entry = manager_protocol.get_kv_value(&machine_id, key).await?;
-        assert!(entry.is_some());
-        let updated_entry = entry.unwrap();
-        assert_eq!(updated_entry.value, updated_value);
-        assert_eq!(updated_entry.author, KvEntryAuthor::Manager);
+        fixture
+            .verify_entry(key, initial_value, KvEntryAuthor::Machine)
+            .await?;
 
-        // Content should be different (verifies update actually happened)
-        assert_ne!(initial_value.as_slice(), updated_value.as_slice());
+        fixture
+            .manager_protocol
+            .set_kv_value(&fixture.machine_id, key, updated_value)
+            .await?;
 
-        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
-
-        // Verify update synced to machine protocol
-        let entry = machine_protocol.get_kv_value(key).await?;
-        assert!(entry.is_some());
-        let synced_entry = entry.unwrap();
-        assert_eq!(synced_entry.value, updated_value);
+        fixture
+            .verify_entry(key, updated_value, KvEntryAuthor::Manager)
+            .await?;
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_kv_namespace_isolation() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
-
-        let machine_id = manager_protocol.list_machines().await?[0].0;
+        let fixture = KvTestFixture::new().await?;
 
         // Set a KV entry
-        machine_protocol.set_kv_value(TEST_KEY, TEST_VALUE).await?;
+        fixture
+            .machine_protocol
+            .set_kv_value(TEST_KEY, TEST_VALUE)
+            .await?;
 
         // Set a machine config (different namespace)
         let machine_config = create_test_machine_config();
-        manager_protocol
-            .set_machine_config(&machine_id, &machine_config)
+        fixture
+            .manager_protocol
+            .set_machine_config(&fixture.machine_id, &machine_config)
             .await?;
 
         // Write a claimable contract (different namespace)
         let (federation_id, claimable_contract) =
             create_test_federation_id_and_claimable_contract();
-        machine_protocol
+        fixture
+            .machine_protocol
             .write_payment_to_machine_doc(&federation_id, &claimable_contract)
             .await?;
 
-        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
+        fixture.wait_for_kv_entries_sync().await?;
 
         // KV entries should only return KV data, not config or contracts
-        let kv_entries = machine_protocol.get_kv_entries().await?;
+        let kv_entries = fixture.machine_protocol.get_kv_entries().await?;
         assert_eq!(kv_entries.len(), 1);
 
         // Verify the KV entry is correct
         let entry = &kv_entries[0];
         assert_eq!(entry.value, TEST_VALUE);
-
         assert_eq!(entry.key, TEST_KEY);
 
         // Verify we can still access the machine config and contracts via their APIs
-        let config = machine_protocol.get_machine_config().await?;
+        let config = fixture.machine_protocol.get_machine_config().await?;
         assert!(config.is_some());
 
-        let contracts = manager_protocol.get_claimable_contracts().await?;
+        let contracts = fixture.manager_protocol.get_claimable_contracts().await?;
         assert_eq!(contracts.len(), 1);
 
         // KV operations should not interfere with other namespaces
-        let kv_entry = machine_protocol.get_kv_value(TEST_KEY).await?;
+        let kv_entry = fixture.machine_protocol.get_kv_value(TEST_KEY).await?;
         assert!(kv_entry.is_some());
 
         Ok(())
@@ -1304,61 +1320,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_kv_author_tracking() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
-
-        let machine_id = manager_protocol.list_machines().await?[0].0;
+        let fixture = KvTestFixture::new().await?;
 
         // Machine writes a key
         let machine_key = b"machine_key";
         let machine_value = b"written_by_machine";
-        machine_protocol
+        fixture
+            .machine_protocol
             .set_kv_value(machine_key, machine_value)
             .await?;
 
         // Manager writes a key
         let manager_key = b"manager_key";
         let manager_value = b"written_by_manager";
-        manager_protocol
-            .set_kv_value(&machine_id, manager_key, manager_value)
+        fixture
+            .manager_protocol
+            .set_kv_value(&fixture.machine_id, manager_key, manager_value)
             .await?;
 
-        wait_for_kv_entries_sync(&machine_protocol, &manager_protocol).await?;
-
-        // Verify machine-written entry shows correct author when read by machine
-        let entry = machine_protocol.get_kv_value(machine_key).await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.value, machine_value);
-        assert_eq!(entry.author, KvEntryAuthor::Machine);
-
-        // Verify machine-written entry shows correct author when read by manager
-        let entry = manager_protocol
-            .get_kv_value(&machine_id, machine_key)
+        // Verify authors are tracked correctly
+        fixture
+            .verify_entry(machine_key, machine_value, KvEntryAuthor::Machine)
             .await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.value, machine_value);
-        assert_eq!(entry.author, KvEntryAuthor::Machine);
-
-        // Verify manager-written entry shows correct author when read by machine
-        let entry = machine_protocol.get_kv_value(manager_key).await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.value, manager_value);
-        assert_eq!(entry.author, KvEntryAuthor::Manager);
-
-        // Verify manager-written entry shows correct author when read by manager
-        let entry = manager_protocol
-            .get_kv_value(&machine_id, manager_key)
+        fixture
+            .verify_entry(manager_key, manager_value, KvEntryAuthor::Manager)
             .await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.value, manager_value);
-        assert_eq!(entry.author, KvEntryAuthor::Manager);
 
         // Verify `get_kv_entries` also shows correct authors
-        let mut entries = machine_protocol.get_kv_entries().await?;
+        let mut entries = fixture.machine_protocol.get_kv_entries().await?;
         entries.sort_by(|a, b| a.key.cmp(&b.key));
 
         // Set all entry timestamps to zero for test reproducibility.
@@ -1387,11 +1376,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_kv_binary_data() -> anyhow::Result<()> {
-        let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
-            create_claimed_machine_manager_pair().await?;
-
-        let machine_id = manager_protocol.list_machines().await?[0].0;
-
         // Test with binary data including null bytes and non-UTF8 sequences
         let binary_key = b"\x00\x01\x02binary_key\xff\xfe";
         let binary_value = vec![
@@ -1399,57 +1383,31 @@ mod tests {
             0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
             0x1c, 0x1d, 0x1e, 0x1f, 0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8,
         ];
-
-        // Set binary data using machine protocol
-        machine_protocol
-            .set_kv_value(binary_key, &binary_value)
-            .await?;
-
-        // Retrieve and verify binary data via machine protocol
-        let entry = machine_protocol.get_kv_value(binary_key).await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.key, binary_key);
-        assert_eq!(entry.value, binary_value);
-        assert_eq!(entry.author, KvEntryAuthor::Machine);
-
-        // Wait for sync
-        tokio::time::sleep(IROH_WAIT_DELAY).await;
-
-        // Retrieve and verify binary data via manager protocol
-        let entry = manager_protocol
-            .get_kv_value(&machine_id, binary_key)
-            .await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.key, binary_key);
-        assert_eq!(entry.value, binary_value);
-        assert_eq!(entry.author, KvEntryAuthor::Machine);
-
-        // Test updating binary data with different binary content
         let updated_binary_value = vec![
             0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5,
-            0xb6, 0xb7, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0x00, 0x00, 0x00,
-            0x00, // null bytes in the middle
+            0xb6, 0xb7, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0x00, 0x00, 0x00, 0x00,
             0xff, 0xff, 0xff, 0xff,
         ];
 
-        manager_protocol
-            .set_kv_value(&machine_id, binary_key, &updated_binary_value)
+        let fixture = KvTestFixture::new().await?;
+
+        fixture
+            .machine_protocol
+            .set_kv_value(binary_key, &binary_value)
             .await?;
 
-        // Verify updated binary data
-        let entry = manager_protocol
-            .get_kv_value(&machine_id, binary_key)
+        fixture
+            .verify_entry(binary_key, &binary_value, KvEntryAuthor::Machine)
             .await?;
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.key, binary_key);
-        assert_eq!(entry.value, updated_binary_value);
-        assert_eq!(entry.author, KvEntryAuthor::Manager);
 
-        // Verify the data is different from original
-        assert_ne!(binary_value, updated_binary_value);
+        fixture
+            .manager_protocol
+            .set_kv_value(&fixture.machine_id, binary_key, &updated_binary_value)
+            .await?;
+
+        fixture
+            .verify_entry(binary_key, &updated_binary_value, KvEntryAuthor::Manager)
+            .await?;
 
         Ok(())
     }
