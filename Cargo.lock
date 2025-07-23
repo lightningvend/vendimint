@@ -11080,7 +11080,7 @@ dependencies = [
  "lightning-invoice",
  "n0-future",
  "quic-rpc",
- "rand 0.8.5",
+ "rand 0.9.2",
  "serde",
  "serde_json",
  "tempfile",
