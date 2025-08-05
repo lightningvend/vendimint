@@ -21,7 +21,7 @@ significant_drop_tightening = "allow"
 anyhow = "1.0.98"
 bincode = { version = "2.0.1", features = ["serde"] }
 bip39 = "2.2.0"
-bitcoin = "0.32.6"
+bitcoin = "0.32.7"
 devimint = "0.7.2"
 fedimintd = "0.7.2"
 fedimint-api-client = { version = "0.7.2", features = ["tor"] }
