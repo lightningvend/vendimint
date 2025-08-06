@@ -4,12 +4,12 @@ use crate::fedimint_wallet::Wallet;
 use crate::vendimint_iroh::KvEntry;
 use crate::vendimint_iroh::MachineConfig;
 use crate::vendimint_iroh::MachineProtocol;
+pub use crate::vendimint_iroh::MachineState;
 use bitcoin::Network;
 use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
-use iroh::NodeAddr;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::oneshot;
 
@@ -59,7 +59,9 @@ impl Machine {
         let wallet_clone = wallet.clone();
         let syncer_task_handle = tokio::task::spawn(async move {
             loop {
-                if let Ok(Some(machine_config)) = iroh_protocol_clone.get_machine_config().await {
+                if let Ok(MachineState::Claimed(Some(machine_config))) =
+                    iroh_protocol_clone.get_machine_state().await
+                {
                     // Handle any change in the machine config.
                     if wallet_clone
                         .set_default_federation(machine_config.federation_invite_code.clone())
@@ -109,16 +111,9 @@ impl Machine {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
     }
 
-    /// Gets the network address of the machine, which can be exchanged
-    /// out-of-band and passed into [`crate::Manager::claim_machine`].
-    pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
-        self.iroh_protocol.node_addr().await
-    }
-
-    /// Gets the machine's configuration, which is automatically configured by its manager.
-    /// Returns `Some` if the machine is configured, `None` otherwise.
-    pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
-        self.iroh_protocol.get_machine_config().await
+    /// Gets the state of the machine.
+    pub async fn get_machine_state(&self) -> anyhow::Result<MachineState> {
+        self.iroh_protocol.get_machine_state().await
     }
 
     /// Awaits the next request from a manager to claim the machine.
@@ -161,7 +156,15 @@ impl Machine {
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
     ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
-        let Some(machine_config) = self.iroh_protocol.get_machine_config().await? else {
+        let MachineState::Claimed(machine_config_or) =
+            self.iroh_protocol.get_machine_state().await?
+        else {
+            return Err(anyhow::anyhow!(
+                "Machine cannot accept payments as it is not claimed"
+            ));
+        };
+
+        let Some(machine_config) = machine_config_or else {
             return Err(anyhow::anyhow!(
                 "Machine cannot accept payments as it is not configured"
             ));

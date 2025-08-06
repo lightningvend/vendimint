@@ -2,7 +2,7 @@ mod machine;
 mod manager;
 mod shared;
 
-pub use machine::MachineProtocol;
+pub use machine::{MachineProtocol, MachineState};
 pub use manager::ManagerProtocol;
 pub use shared::{KvEntry, KvEntryAuthor, MachineConfig};
 

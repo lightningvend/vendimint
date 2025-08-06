@@ -4,6 +4,7 @@ use bitcoin::Network;
 use fedimint_core::{Amount, invite_code::InviteCode};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
+use vendimint::MachineState;
 
 // TODO: Split up code better so we don't need this clippy rule exemption.
 #[allow(clippy::too_many_lines)]
@@ -33,8 +34,11 @@ async fn main() -> anyhow::Result<()> {
                 vendimint::Manager::new(manager_storage_path.path(), Network::Regtest).await?;
 
             tracing::info!("Claiming machine from manager...");
+            let MachineState::Unclaimed(machine_addr) = machine.get_machine_state().await? else {
+                panic!("Machine should be unclaimed");
+            };
             let (manager_claim_pin, manager_claim_accepter) =
-                manager.claim_machine(machine.node_addr().await?).await?;
+                manager.claim_machine(machine_addr).await?;
 
             let (machine_claim_pin, machine_claim_accepter) =
                 machine.await_next_incoming_claim_request().await.unwrap();
@@ -61,7 +65,10 @@ async fn main() -> anyhow::Result<()> {
 
             // Wait for manager to auto-configure the machine.
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let machine_config = machine.get_machine_config().await?.unwrap();
+            let MachineState::Claimed(Some(machine_config)) = machine.get_machine_state().await?
+            else {
+                panic!("Machine should be claimed and configured");
+            };
             assert_eq!(
                 machine_config.federation_invite_code,
                 federation_invite_code

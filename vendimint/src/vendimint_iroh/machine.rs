@@ -45,8 +45,17 @@ pub struct MachineProtocol {
     docs: Docs<iroh_blobs::store::fs::Store>,
     app_storage_path: PathBuf,
     claim_request_receiver: Mutex<mpsc::Receiver<(u32, oneshot::Sender<bool>)>>,
-    #[cfg(test)]
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
+}
+
+/// The state of a machine with respect to its manager.
+pub enum MachineState {
+    /// The machine is claimed by a manager.
+    /// Contains `Some` if the machine is configured
+    /// by the manager, or `None` if unconfigured.
+    Claimed(Option<MachineConfig>),
+    /// The machine is unclaimed.
+    Unclaimed(NodeAddr),
 }
 
 #[derive(Clone, Debug)]
@@ -155,7 +164,6 @@ impl MachineProtocol {
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
             claim_request_receiver: Mutex::new(rx),
-            #[cfg(test)]
             claimed_manager_pubkey,
         })
     }
@@ -172,9 +180,25 @@ impl MachineProtocol {
         self.router.is_shutdown()
     }
 
+    // TODO: Test this method.
+    pub async fn get_machine_state(&self) -> anyhow::Result<MachineState> {
+        let claimed_manager_pubkey = self.claimed_manager_pubkey.lock().await;
+
+        if claimed_manager_pubkey.is_some() {
+            Ok(MachineState::Claimed(self.get_machine_config().await?))
+        } else {
+            Ok(MachineState::Unclaimed(
+                self.router.endpoint().node_addr().await?,
+            ))
+        }
+    }
+
+    // TODO: Get rid of this method and use `get_machine_state` instead.
+    #[cfg(test)]
     pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
         self.router.endpoint().node_addr().await
     }
+
     pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
         self.claim_request_receiver.lock().await.recv().await
     }
@@ -201,6 +225,7 @@ impl MachineProtocol {
         Ok(())
     }
 
+    // TODO: Make this private.
     pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
         let Some(entry) = self
             .get_or_create_machine_doc()
