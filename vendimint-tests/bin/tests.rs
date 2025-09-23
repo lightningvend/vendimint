@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             // Original 1,000 sat payment, minus federation and gateway fees.
-            assert_eq!(ecash.total_amount(), Amount::from_msats(943_906));
+            assert_eq!(ecash.total_amount(), Amount::from_msats(993_901));
 
             tracing::info!("Extracted manager ecash balance: {}", ecash.total_amount());
 

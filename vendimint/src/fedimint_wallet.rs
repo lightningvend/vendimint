@@ -14,13 +14,13 @@ use bitcoin::{
     hex::DisplayHex,
     secp256k1::{PublicKey, Secp256k1},
 };
-use fedimint_api_client::api::net::Connector;
 use fedimint_bip39::Bip39RootSecretStrategy;
-use fedimint_client::{Client, ClientHandle, ModuleKind, OperationId, secret::RootSecretStrategy};
+use fedimint_client::{
+    Client, ClientHandle, ModuleKind, OperationId, RootSecret, secret::RootSecretStrategy,
+};
 use fedimint_core::{
     Amount, config::FederationId, db::Database, invite_code::InviteCode, util::SafeUrl,
 };
-use fedimint_derive_secret::DerivableSecret;
 use fedimint_lnv2_common::{Bolt11InvoiceDescription, ContractId};
 use fedimint_lnv2_remote_client::{
     ClaimableContract, FinalRemoteReceiveOperationState, LightningClientModule,
@@ -97,7 +97,7 @@ fn format_amount(amount: Amount) -> String {
 }
 
 pub struct Wallet {
-    derivable_secret: DerivableSecret,
+    root_secret: RootSecret,
     clients: Arc<RwLock<HashMap<FederationId, ClientHandle>>>,
     fedimint_clients_data_dir: Mutex<PathBuf>,
     view_update_receiver: watch::Receiver<WalletView>,
@@ -186,7 +186,7 @@ impl Wallet {
             .expect("Can never fail (see `new_master`'s implementation)");
 
         let wallet = Self {
-            derivable_secret: get_derivable_secret(&xprivkey),
+            root_secret: get_root_secret(&xprivkey),
             clients,
             fedimint_clients_data_dir: Mutex::from(fedimint_clients_data_dir),
             view_update_receiver,
@@ -333,8 +333,7 @@ impl Wallet {
                 clients.insert(federation_id, client);
 
                 return Err(anyhow::anyhow!(
-                    "Cannot leave federation with non-zero balance: {}",
-                    federation_id
+                    "Cannot leave federation with non-zero balance: {federation_id}"
                 ));
             }
 
@@ -398,7 +397,7 @@ impl Wallet {
 
         let client = clients
             .get(&federation_id)
-            .ok_or_else(|| anyhow::anyhow!("Client for federation {} not found", federation_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Client for federation {federation_id} not found"))?;
 
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
@@ -449,7 +448,7 @@ impl Wallet {
 
         let client = clients
             .get(&federation_id)
-            .ok_or_else(|| anyhow::anyhow!("Client for federation {} not found", federation_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Client for federation {federation_id} not found"))?;
 
         let mint_module = client.get_first_module::<MintClientModule>().unwrap();
 
@@ -557,17 +556,15 @@ impl Wallet {
 
         client_builder.with_primary_module_kind(ModuleKind::from_static_str("mint"));
 
-        let derivable_secret = self.derivable_secret.clone();
+        let root_secret = self.root_secret.clone();
 
         let client = if is_initialized {
-            client_builder.open(derivable_secret).await?
+            client_builder.open(root_secret).await?
         } else {
-            let config = Connector::Tor
-                .download_from_invite_code(&invite_code)
-                .await?;
-
             client_builder
-                .join(derivable_secret, config, invite_code.api_secret())
+                .preview(&invite_code)
+                .await?
+                .join(root_secret)
                 .await?
         };
 
@@ -589,14 +586,13 @@ impl Wallet {
 
         client_builder.with_primary_module_kind(ModuleKind::from_static_str("mint"));
 
-        let derivable_secret = self.derivable_secret.clone();
+        let root_secret = self.root_secret.clone();
 
         let client = if is_initialized {
-            client_builder.open(derivable_secret).await?
+            client_builder.open(root_secret).await?
         } else {
             return Err(anyhow::anyhow!(
-                "Federation with ID {} is not initialized.",
-                federation_id
+                "Federation with ID {federation_id} is not initialized."
             ));
         };
 
@@ -604,7 +600,7 @@ impl Wallet {
     }
 }
 
-fn get_derivable_secret(xprivkey: &Xpriv) -> DerivableSecret {
+fn get_root_secret(xprivkey: &Xpriv) -> RootSecret {
     let context = Secp256k1::new();
 
     let xpriv = xprivkey
@@ -622,7 +618,7 @@ fn get_derivable_secret(xprivkey: &Xpriv) -> DerivableSecret {
     let mnemonic = Mnemonic::from_entropy(&xpriv.private_key.secret_bytes())
         .expect("Private key should always be 32 bytes");
 
-    Bip39RootSecretStrategy::<12>::to_root_secret(&mnemonic)
+    RootSecret::StandardDoubleDerive(Bip39RootSecretStrategy::<12>::to_root_secret(&mnemonic))
 }
 
 const fn coin_type_from_network(network_kind: NetworkKind) -> u32 {
