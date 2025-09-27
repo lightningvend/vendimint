@@ -183,6 +183,7 @@ impl Machine {
     }
 
     /// Awaits the final state of an invoice created by [`Self::receive_payment`].
+    /// This function is idempotent for a given payment/operation id.
     pub async fn await_receive_payment_final_state(
         &self,
         operation_id: OperationId,

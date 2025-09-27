@@ -93,12 +93,17 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
 
             tracing::info!("Waiting for payment to be received to machine...");
-            let final_payment_state = machine
-                .await_receive_payment_final_state(operation_id)
-                .await?;
-
             assert_eq!(
-                final_payment_state,
+                machine
+                    .await_receive_payment_final_state(operation_id)
+                    .await?,
+                FinalRemoteReceiveOperationState::Funded
+            );
+            // Check a second time to ensure idempotency.
+            assert_eq!(
+                machine
+                    .await_receive_payment_final_state(operation_id)
+                    .await?,
                 FinalRemoteReceiveOperationState::Funded
             );
 
