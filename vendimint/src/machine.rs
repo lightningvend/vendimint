@@ -144,7 +144,7 @@ impl Machine {
 
     /// Creates a [Bolt11](https://github.com/lightning/bolts/blob/master/11-payment-encoding.md)
     /// lightning invoice and an operation ID which can be used to await the payment/timeout
-    /// of the invoice by passing it into [`Self::await_receive_payment_final_state`].
+    /// of the invoice by passing it into [`Self::await_receive_payment`].
     ///
     /// If the invoice is paid, the funds will be automatically credited to the wallet of the
     /// manager that claimed the machine whenever both the machine and the manager are online
@@ -184,13 +184,11 @@ impl Machine {
 
     /// Awaits the final state of an invoice created by [`Self::receive_payment`].
     /// This function is idempotent for a given payment/operation id.
-    pub async fn await_receive_payment_final_state(
+    pub async fn await_receive_payment(
         &self,
         operation_id: OperationId,
     ) -> anyhow::Result<FinalRemoteReceiveOperationState> {
-        self.wallet
-            .await_receive_payment_final_state(operation_id)
-            .await
+        self.wallet.await_receive_payment(operation_id).await
     }
 
     /// Makes completed payments syncable to the manager.

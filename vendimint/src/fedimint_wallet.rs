@@ -408,7 +408,7 @@ impl Wallet {
             .map_err(ReceivePaymentError::RemoteReceiveError)
     }
 
-    pub async fn await_receive_payment_final_state(
+    pub async fn await_receive_payment(
         &self,
         operation_id: OperationId,
     ) -> anyhow::Result<FinalRemoteReceiveOperationState> {
