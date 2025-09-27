@@ -10,6 +10,7 @@ use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
+use fedimint_lnv2_remote_client::RemoteReceiveError;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::oneshot;
 
@@ -155,19 +156,18 @@ impl Machine {
         expiry_secs: u32,
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
-    ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
-        let MachineState::Claimed(machine_config_or) =
-            self.iroh_protocol.get_machine_state().await?
+    ) -> Result<(Bolt11Invoice, OperationId), ReceivePaymentError> {
+        let MachineState::Claimed(machine_config_or) = self
+            .iroh_protocol
+            .get_machine_state()
+            .await
+            .map_err(ReceivePaymentError::InternalError)?
         else {
-            return Err(anyhow::anyhow!(
-                "Machine cannot accept payments as it is not claimed"
-            ));
+            return Err(ReceivePaymentError::MachineUnclaimed);
         };
 
         let Some(machine_config) = machine_config_or else {
-            return Err(anyhow::anyhow!(
-                "Machine cannot accept payments as it is not configured"
-            ));
+            return Err(ReceivePaymentError::MachineUnconfigured);
         };
 
         self.wallet
@@ -268,3 +268,35 @@ impl Machine {
         self.iroh_protocol.get_kv_entries().await
     }
 }
+
+#[derive(Debug)]
+pub enum ReceivePaymentError {
+    MachineUnclaimed,
+    MachineUnconfigured,
+    /// Machine is not connected to the federation specified in its configuration.
+    /// This error should only occur shortly after the machine's config is updated
+    /// to point to a new federation. It should generally resolve itself
+    /// automatically once the machine connects to the new federation.
+    MachineNotConnectedToFederation,
+    RemoteReceiveError(RemoteReceiveError),
+    /// Internal error occured. This is always a bug.
+    InternalError(anyhow::Error),
+}
+
+impl std::fmt::Display for ReceivePaymentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MachineUnclaimed => write!(f, "machine is unclaimed"),
+            Self::MachineUnconfigured => write!(f, "machine is unconfigured"),
+            Self::MachineNotConnectedToFederation => {
+                write!(f, "machine is not connected to the federation")
+            }
+            Self::RemoteReceiveError(err) => {
+                write!(f, "remote receive error: {err}")
+            }
+            Self::InternalError(err) => write!(f, "internal error: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for ReceivePaymentError {}

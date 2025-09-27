@@ -82,7 +82,8 @@ async fn main() -> anyhow::Result<()> {
                     Bolt11InvoiceDescription::Direct("Cherry OliPop".to_string()),
                     Some(dev_fed.gw_ldk().await?.addr.parse()?),
                 )
-                .await?;
+                .await
+                .expect("Failed to generate invoice");
 
             tracing::info!("Paying invoice...");
             dev_fed

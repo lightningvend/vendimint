@@ -34,6 +34,8 @@ use lightning_invoice::Bolt11Invoice;
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, mpsc, oneshot, watch};
 
+use crate::machine::ReceivePaymentError;
+
 const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
 const MNEMONIC_PATH: &str = "mnemonic.txt";
@@ -383,7 +385,6 @@ impl Wallet {
         WalletView { federations }
     }
 
-    // TODO: Return a strongly typed result.
     pub async fn receive_payment(
         &self,
         federation_id: FederationId,
@@ -392,18 +393,19 @@ impl Wallet {
         expiry_secs: u32,
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
-    ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
+    ) -> Result<(Bolt11Invoice, OperationId), ReceivePaymentError> {
         let clients = self.clients.read().await;
 
         let client = clients
             .get(&federation_id)
-            .ok_or_else(|| anyhow::anyhow!("Client for federation {federation_id} not found"))?;
+            .ok_or_else(|| ReceivePaymentError::MachineNotConnectedToFederation)?;
 
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
-        Ok(lightning_module
+        lightning_module
             .remote_receive(claimer_pk, amount, expiry_secs, description, gateway)
-            .await?)
+            .await
+            .map_err(ReceivePaymentError::RemoteReceiveError)
     }
 
     pub async fn await_receive_payment_final_state(
