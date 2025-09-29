@@ -37,7 +37,7 @@ fedimint-mint-client = "0.8.1"
 fedimint-rocksdb = "0.8.1"
 fedimint-tpe = "0.8.1"
 futures-util = "0.3.31"
-iroh = { version = "0.34.1", features = ["discovery-local-network"] }
+iroh = { version = "0.90.0", features = ["discovery-local-network"] }
 iroh-blobs = "0.34.1"
 iroh-docs = { version = "0.34.0", features = ["rpc"] }
 iroh-gossip = "0.34.1"
