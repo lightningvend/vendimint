@@ -19,7 +19,7 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::oneshot};
 
-use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
+use crate::vendimint_iroh::shared::CLAIM_MAX_MACHINE_CONFIG_SIZE_BYTES;
 
 use super::shared::{
     CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY,
@@ -68,8 +68,14 @@ impl ManagerProtocol {
     pub async fn claim_machine(
         &self,
         node_addr: NodeAddr,
+        machine_config: &MachineConfig,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
         let machine_id = node_addr.node_id;
+
+        let machine_config_bytes = serde_json::to_vec(machine_config)?;
+        if machine_config_bytes.len() > CLAIM_MAX_MACHINE_CONFIG_SIZE_BYTES {
+            return Err(anyhow::anyhow!("machine config too large"));
+        }
 
         let conn = self
             .router
@@ -85,7 +91,7 @@ impl ManagerProtocol {
             if rx.await.unwrap_or(false) {
                 if let Ok((mut send, mut recv)) = conn.open_bi().await {
                     // Send open ping magic byte.
-                    if send.write_all(&PING_MAGIC_BYTES).await.is_err() {
+                    if send.write_all(&machine_config_bytes).await.is_err() {
                         return;
                     }
                     if send.finish().is_err() {
@@ -148,6 +154,7 @@ impl ManagerProtocol {
         Ok(machines)
     }
 
+    // TODO: Should this return an `Option`?
     pub async fn get_machine_config(
         &self,
         machine_id: &NodeId,

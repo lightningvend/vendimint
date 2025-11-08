@@ -60,7 +60,7 @@ impl Machine {
         let wallet_clone = wallet.clone();
         let syncer_task_handle = tokio::task::spawn(async move {
             loop {
-                if let Ok(MachineState::Claimed(Some(machine_config))) =
+                if let Ok(MachineState::Claimed(machine_config)) =
                     iroh_protocol_clone.get_machine_state().await
                 {
                     // Handle any change in the machine config.
@@ -157,17 +157,13 @@ impl Machine {
         description: Bolt11InvoiceDescription,
         gateway: Option<SafeUrl>,
     ) -> Result<(Bolt11Invoice, OperationId), ReceivePaymentError> {
-        let MachineState::Claimed(machine_config_or) = self
+        let MachineState::Claimed(machine_config) = self
             .iroh_protocol
             .get_machine_state()
             .await
             .map_err(ReceivePaymentError::InternalError)?
         else {
             return Err(ReceivePaymentError::MachineUnclaimed);
-        };
-
-        let Some(machine_config) = machine_config_or else {
-            return Err(ReceivePaymentError::MachineUnconfigured);
         };
 
         self.wallet
@@ -271,7 +267,6 @@ impl Machine {
 #[derive(Debug)]
 pub enum ReceivePaymentError {
     MachineUnclaimed,
-    MachineUnconfigured,
     /// Machine is not connected to the federation specified in its configuration.
     /// This error should only occur shortly after the machine's config is updated
     /// to point to a new federation. It should generally resolve itself
@@ -286,7 +281,6 @@ impl std::fmt::Display for ReceivePaymentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MachineUnclaimed => write!(f, "machine is unclaimed"),
-            Self::MachineUnconfigured => write!(f, "machine is unconfigured"),
             Self::MachineNotConnectedToFederation => {
                 write!(f, "machine is not connected to the federation")
             }

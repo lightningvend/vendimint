@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use fedimint_core::config::FederationId;
+use fedimint_core::{config::FederationId, db::DatabaseValue};
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
 use iroh::{
@@ -29,7 +29,7 @@ use tokio::{
     sync::{Mutex, mpsc, oneshot},
 };
 
-use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
+use crate::vendimint_iroh::shared::CLAIM_MAX_MACHINE_CONFIG_SIZE_BYTES;
 
 use super::shared::{
     CLAIM_ALPN, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY, MachineConfig,
@@ -49,11 +49,10 @@ pub struct MachineProtocol {
 }
 
 /// The state of a machine with respect to its manager.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MachineState {
     /// The machine is claimed by a manager.
-    /// Contains `Some` if the machine is configured
-    /// by the manager, or `None` if unconfigured.
-    Claimed(Option<MachineConfig>),
+    Claimed(MachineConfig),
     /// The machine is unclaimed.
     Unclaimed(NodeAddr),
 }
@@ -100,11 +99,19 @@ impl ProtocolHandler for ClaimHandler {
                 // that it would like to claim this machine.
                 // Read n + 1 bytes to ensure the magic byte
                 // is the exact correct length, and no more.
-                if recv.read_to_end(PING_MAGIC_BYTES.len() + 1).await? != PING_MAGIC_BYTES {
-                    return Err(anyhow::anyhow!("Invalid manager stream open ping"));
-                }
+                let machine_config: MachineConfig = serde_json::from_slice(
+                    &recv
+                        .read_to_end(CLAIM_MAX_MACHINE_CONFIG_SIZE_BYTES)
+                        .await?,
+                )?;
 
                 let doc = get_or_create_machine_doc(&this.app_storage_path, &this.docs).await?;
+                doc.set_bytes(
+                    this.docs.client().authors().default().await?,
+                    MACHINE_CONFIG_KEY.to_bytes(),
+                    serde_json::to_vec(&machine_config)?,
+                )
+                .await?;
                 let ticket = doc
                     .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
                     .await?;
@@ -225,18 +232,15 @@ impl MachineProtocol {
         Ok(())
     }
 
-    // TODO: Make this private.
-    pub async fn get_machine_config(&self) -> anyhow::Result<Option<MachineConfig>> {
-        let Some(entry) = self
+    async fn get_machine_config(&self) -> anyhow::Result<MachineConfig> {
+        let entry = self
             .get_or_create_machine_doc()
             .await?
             .get_one(
                 QueryBuilder::<SingleLatestPerKeyQuery>::default().key_exact(MACHINE_CONFIG_KEY),
             )
             .await?
-        else {
-            return Ok(None);
-        };
+            .ok_or_else(|| anyhow::anyhow!("Machine config not found for claimed machine"))?;
 
         let bytes = self
             .blobs
@@ -244,7 +248,7 @@ impl MachineProtocol {
             .read_to_bytes(entry.content_hash())
             .await?;
 
-        Ok(Some(serde_json::from_slice(&bytes)?))
+        Ok(serde_json::from_slice(&bytes)?)
     }
 
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data

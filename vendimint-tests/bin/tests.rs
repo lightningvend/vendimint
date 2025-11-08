@@ -65,9 +65,8 @@ async fn main() -> anyhow::Result<()> {
 
             // Wait for manager to auto-configure the machine.
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let MachineState::Claimed(Some(machine_config)) = machine.get_machine_state().await?
-            else {
-                panic!("Machine should be claimed and configured");
+            let MachineState::Claimed(machine_config) = machine.get_machine_state().await? else {
+                panic!("Machine should be claimed");
             };
             assert_eq!(
                 machine_config.federation_invite_code,

@@ -103,7 +103,15 @@ impl Manager {
         &self,
         node_addr: NodeAddr,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
-        self.iroh_protocol.claim_machine(node_addr).await
+        let machine_config = self
+            .wallet
+            .compute_machine_config_for_default_federation_as_manager()
+            .await?
+            .ok_or(anyhow::anyhow!("Failed to compute machine config"))?;
+
+        self.iroh_protocol
+            .claim_machine(node_addr, &machine_config)
+            .await
     }
 
     /// Lists the node IDs of all machines claimed by this manager.
@@ -215,17 +223,15 @@ impl Manager {
 
         let federation_id = default_invite.federation_id();
 
-        let Some(claimer_pk) = wallet.get_lnv2_claim_pubkey(federation_id).await else {
-            return;
-        };
-
         let Ok(machines) = manager_protocol.list_machines().await else {
             return;
         };
 
-        let new_config = MachineConfig {
-            federation_invite_code: default_invite,
-            claimer_pk,
+        let Ok(Some(new_config)) = wallet
+            .compute_machine_config_for_default_federation_as_manager()
+            .await
+        else {
+            return;
         };
 
         for (machine_id, _) in machines {

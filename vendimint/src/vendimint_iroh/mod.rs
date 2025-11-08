@@ -11,6 +11,7 @@ mod tests {
     use super::*;
 
     use anyhow::Context;
+    use bitcoin::secp256k1::PublicKey;
     use futures_util::future;
     use std::{str::FromStr, sync::Arc, time::Duration};
 
@@ -66,9 +67,15 @@ mod tests {
         machine_accepts: bool,
         manager_accepts: bool,
     ) -> anyhow::Result<(u32, MachineProtocol, ManagerProtocol)> {
+        let machine_config = get_random_machine_config();
+
         let machine_addr = machine_protocol.node_addr().await?;
+        let machine_config_clone = machine_config.clone();
         let manager_task = tokio::spawn(async move {
-            let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
+            let (pin_mgr, tx_mgr) = manager_protocol
+                .claim_machine(machine_addr, &machine_config_clone)
+                .await
+                .unwrap();
             tx_mgr.send(manager_accepts).unwrap();
             (pin_mgr, manager_protocol)
         });
@@ -83,6 +90,11 @@ mod tests {
         let ((pin_mgr, manager_protocol), (pin_machine, machine_protocol)) =
             tokio::try_join!(manager_task, machine_task)?;
         assert_eq!(pin_mgr, pin_machine);
+
+        assert_eq!(
+            machine_protocol.get_machine_state().await?,
+            MachineState::Claimed(machine_config)
+        );
 
         Ok((pin_mgr, machine_protocol, manager_protocol))
     }
@@ -137,6 +149,18 @@ mod tests {
             machine_temp,
             manager_temp,
         ))
+    }
+
+    fn get_random_machine_config() -> MachineConfig {
+        unimplemented!()
+        // MachineConfig {
+        //     federation_invite_code: InviteCode::from_map(
+        //         peer_to_url_map,
+        //         federation_id,
+        //         api_secret,
+        //     ),
+        //     claimer_pk: PublicKey::from_str("asdf"),
+        // }
     }
 
     /// Test fixture for K/V tests that provides common setup and helper methods.
@@ -347,15 +371,15 @@ mod tests {
 
         // Wait for machine config to be set on the machine.
         wait_for_condition(
-            || async { matches!(machine_protocol.get_machine_config().await, Ok(Some(_))) },
+            || async { matches!(machine_protocol.get_machine_state().await, Ok(_)) },
             DEFAULT_WAIT_ITERATIONS,
         )
         .await
         .context("Failed waiting for machine config to be set")?;
 
         assert_eq!(
-            machine_protocol.get_machine_config().await?,
-            Some(config.clone())
+            machine_protocol.get_machine_state().await?,
+            MachineState::Claimed(config.clone())
         );
         assert_eq!(
             manager_protocol.get_machine_config(machine_id).await?,
@@ -409,7 +433,10 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_claimed_machine_manager_pair().await?;
 
-        assert_eq!(machine_protocol.get_machine_config().await?, None);
+        assert!(matches!(
+            machine_protocol.get_machine_state().await?,
+            MachineState::Unclaimed(_)
+        ));
 
         let machine_config = create_test_machine_config();
         let machine_id = manager_protocol.list_machines().await?[0].0;
@@ -1103,7 +1130,10 @@ mod tests {
         let machine_id = manager_protocol.list_machines().await?[0].0;
 
         // Initially no config
-        assert_eq!(machine_protocol.get_machine_config().await?, None);
+        assert!(matches!(
+            machine_protocol.get_machine_state().await?,
+            MachineState::Unclaimed(_)
+        ));
         assert_eq!(
             manager_protocol.get_machine_config(&machine_id).await?,
             None
@@ -1304,8 +1334,10 @@ mod tests {
         assert_eq!(entry.key, TEST_KEY);
 
         // Verify we can still access the machine config and contracts via their APIs
-        let config = fixture.machine_protocol.get_machine_config().await?;
-        assert!(config.is_some());
+        assert_eq!(
+            fixture.machine_protocol.get_machine_state().await?,
+            MachineState::Claimed(machine_config)
+        );
 
         let contracts = fixture.manager_protocol.get_claimable_contracts().await?;
         assert_eq!(contracts.len(), 1);

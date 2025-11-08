@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 pub const CLAIMABLE_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
+/// Key for storing the machine's configuration.
+/// A value for this key is set by the machine when it
+/// is claimed, after which a value for this key must
+/// _always_ be present.
 pub const MACHINE_CONFIG_KEY: [u8; 2] = [0x02, 0xFF];
 /// Prefix for generic key/value storage. Used to store arbitrary data
 /// that has meaning to the API caller, but no meaning within vendimint.
@@ -25,9 +29,12 @@ pub const KV_PREFIX: [u8; 2] = [0x03, 0xFF];
 pub const CLAIM_ALPN: &[u8] = b"machine-claim/0";
 const CLAIM_EXPORT_LABEL: &[u8] = b"machine-claim-pin";
 
-/// Magic bytes sent from manager to machine to alert
-/// the machine that the manager would like to claim it.
-pub const PING_MAGIC_BYTES: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
+/// Max size of the machine config that the manager can
+/// send to the machine at claim time. Limits worst-case
+/// memory usage by iroh. Generously set to 1MB, which
+/// should be much more than enough for any reasonable
+/// configuration.
+pub const CLAIM_MAX_MACHINE_CONFIG_SIZE_BYTES: usize = 1024 * 1024;
 
 const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";

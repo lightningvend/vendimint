@@ -34,7 +34,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, mpsc, oneshot, watch};
 
-use crate::machine::ReceivePaymentError;
+use crate::{MachineConfig, machine::ReceivePaymentError};
 
 const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -541,6 +541,24 @@ impl Wallet {
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
         lightning_module.claim_contract(claimable_contract).await
+    }
+
+    pub async fn compute_machine_config_for_default_federation_as_manager(
+        &self,
+    ) -> anyhow::Result<Option<MachineConfig>> {
+        let Some(federation_invite_code) = self.get_default_federation().await? else {
+            return Ok(None);
+        };
+
+        let federation_id = federation_invite_code.federation_id();
+        let Some(claimer_pk) = self.get_lnv2_claim_pubkey(federation_id).await else {
+            return Ok(None);
+        };
+
+        Ok(Some(MachineConfig {
+            federation_invite_code,
+            claimer_pk,
+        }))
     }
 
     async fn build_client_from_invite_code(
