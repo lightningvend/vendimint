@@ -241,10 +241,10 @@ impl Wallet {
         let mut read_dir = tokio::fs::read_dir(fedimint_clients_data_dir.as_path()).await?;
         let mut federation_ids = Vec::<FederationId>::new();
         while let Some(entry) = read_dir.next_entry().await? {
-            if let Ok(federation_id_str) = entry.file_name().into_string() {
-                if let Ok(federation_id) = federation_id_str.parse() {
-                    federation_ids.push(federation_id);
-                }
+            if let Ok(federation_id_str) = entry.file_name().into_string()
+                && let Ok(federation_id) = federation_id_str.parse()
+            {
+                federation_ids.push(federation_id);
             }
         }
 

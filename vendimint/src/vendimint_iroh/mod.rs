@@ -1350,7 +1350,9 @@ mod tests {
         entries.sort_by(|a, b| a.key.cmp(&b.key));
 
         // Set all entry timestamps to zero for test reproducibility.
-        entries.iter_mut().for_each(|entry| entry.timestamp = 0);
+        for entry in &mut entries {
+            entry.timestamp = 0;
+        }
 
         assert_eq!(
             entries,
