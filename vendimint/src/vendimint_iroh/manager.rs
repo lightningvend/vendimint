@@ -82,36 +82,34 @@ impl ManagerProtocol {
         let docs = self.docs.clone();
         let machine_doc_ticket_path = self.get_machine_doc_ticket_path();
         tokio::spawn(async move {
-            if rx.await.unwrap_or(false) {
-                if let Ok((mut send, mut recv)) = conn.open_bi().await {
-                    // Send open ping magic byte.
-                    if send.write_all(&PING_MAGIC_BYTES).await.is_err() {
-                        return;
-                    }
-                    if send.finish().is_err() {
-                        return;
-                    }
-                    if send.stopped().await.is_err() {
-                        return;
-                    }
+            if rx.await.unwrap_or(false)
+                && let Ok((mut send, mut recv)) = conn.open_bi().await
+            {
+                // Send open ping magic byte.
+                if send.write_all(&PING_MAGIC_BYTES).await.is_err() {
+                    return;
+                }
+                if send.finish().is_err() {
+                    return;
+                }
+                if send.stopped().await.is_err() {
+                    return;
+                }
 
-                    if let Ok(bytes) = recv.read_to_end(1024 * 1024).await {
-                        if let Ok(machine_doc_ticket) = serde_json::from_slice::<DocTicket>(&bytes)
-                        {
-                            if matches!(machine_doc_ticket.capability, Capability::Write(_)) {
-                                let _ = docs.client().import(machine_doc_ticket.clone()).await;
-                                let _ = tokio::fs::write(
-                                    machine_doc_ticket_path.join(machine_id.to_string()),
-                                    serde_json::to_string(&machine_doc_ticket).unwrap(),
-                                )
-                                .await;
-                            }
-                        }
-                    }
+                if let Ok(bytes) = recv.read_to_end(1024 * 1024).await
+                    && let Ok(machine_doc_ticket) = serde_json::from_slice::<DocTicket>(&bytes)
+                    && matches!(machine_doc_ticket.capability, Capability::Write(_))
+                {
+                    let _ = docs.client().import(machine_doc_ticket.clone()).await;
+                    let _ = tokio::fs::write(
+                        machine_doc_ticket_path.join(machine_id.to_string()),
+                        serde_json::to_string(&machine_doc_ticket).unwrap(),
+                    )
+                    .await;
+                }
 
-                    if send.shutdown().await.is_err() {
-                        return;
-                    }
+                if send.shutdown().await.is_err() {
+                    return;
                 }
             }
             conn.close(0u32.into(), b"done");
