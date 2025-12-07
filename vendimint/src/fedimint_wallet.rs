@@ -328,7 +328,7 @@ impl Wallet {
         let mut clients = self.clients.write().await;
 
         if let Some(client) = clients.remove(&federation_id) {
-            if client.get_balance().await.msats != 0 {
+            if client.get_balance().await.unwrap().msats != 0 {
                 // Re-insert the client back into the clients map.
                 clients.insert(federation_id, client);
 
@@ -375,7 +375,7 @@ impl Wallet {
                         .global
                         .federation_name()
                         .map(ToString::to_string),
-                    balance: client.get_balance().await,
+                    balance: client.get_balance().await.unwrap(),
                 },
             );
         }
@@ -432,7 +432,7 @@ impl Wallet {
         let clients = self.clients.read().await;
 
         for client in clients.values() {
-            balance += client.get_balance().await;
+            balance += client.get_balance().await.unwrap();
         }
         balance
     }
@@ -525,10 +525,10 @@ impl Wallet {
             .await;
     }
 
-    pub async fn claim_contract(
+    pub async fn claim_contracts(
         &self,
         federation_id: FederationId,
-        claimable_contract: ClaimableContract,
+        claimable_contracts: Vec<ClaimableContract>,
     ) -> anyhow::Result<()> {
         let clients = self.clients.read().await;
 
@@ -538,7 +538,7 @@ impl Wallet {
 
         let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
 
-        lightning_module.claim_contract(claimable_contract).await
+        lightning_module.claim_contracts(claimable_contracts).await
     }
 
     async fn build_client_from_invite_code(
@@ -548,7 +548,7 @@ impl Wallet {
     ) -> anyhow::Result<ClientHandle> {
         let is_initialized = fedimint_client::Client::is_initialized(&db).await;
 
-        let mut client_builder = Client::builder(db).await?;
+        let mut client_builder = Client::builder().await?;
 
         // Add lightning and e-cash modules. For now we don't support on-chain.
         client_builder.with_module(MintClientInit);
@@ -559,12 +559,12 @@ impl Wallet {
         let root_secret = self.root_secret.clone();
 
         let client = if is_initialized {
-            client_builder.open(root_secret).await?
+            client_builder.open(db, root_secret).await?
         } else {
             client_builder
                 .preview(&invite_code)
                 .await?
-                .join(root_secret)
+                .join(db, root_secret)
                 .await?
         };
 
@@ -578,7 +578,7 @@ impl Wallet {
     ) -> anyhow::Result<ClientHandle> {
         let is_initialized = fedimint_client::Client::is_initialized(&db).await;
 
-        let mut client_builder = Client::builder(db).await?;
+        let mut client_builder = Client::builder().await?;
 
         // Add lightning and e-cash modules. For now we don't support on-chain.
         client_builder.with_module(MintClientInit);
@@ -589,7 +589,7 @@ impl Wallet {
         let root_secret = self.root_secret.clone();
 
         let client = if is_initialized {
-            client_builder.open(root_secret).await?
+            client_builder.open(db, root_secret).await?
         } else {
             return Err(anyhow::anyhow!(
                 "Federation with ID {federation_id} is not initialized."

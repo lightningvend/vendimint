@@ -179,7 +179,7 @@ impl Manager {
         let mut claimed_contracts = Vec::new();
         for (machine_id, federation_id, claimable_contract) in claimable_contracts {
             if let Err(err) = wallet
-                .claim_contract(federation_id, claimable_contract.clone())
+                .claim_contracts(federation_id, vec![claimable_contract.clone()]) // TODO: Batch-claim contracts.
                 .await
             {
                 // TODO: Should we add a dead-letter queue for failed
