@@ -325,7 +325,7 @@ checksum = "375c3b0681ca73c8678dc2e879f01964121955dc8e45f3b334ed0f7e7cefec48"
 dependencies = [
  "async-trait",
  "cfg-if",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_builder_fork_arti",
  "derive_more 2.1.0",
  "educe",
@@ -2097,40 +2097,12 @@ dependencies = [
 
 [[package]]
 name = "derive-deftly"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8ea84d0109517cc2253d4a679bdda1e8989e9bd86987e9e4f75ffdda0095fd1"
-dependencies = [
- "derive-deftly-macros 0.14.6",
- "heck",
-]
-
-[[package]]
-name = "derive-deftly"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "957bb73a3a9c0bbcac67e129b81954661b3cfcb9e28873d8441f91b54852e77a"
 dependencies = [
- "derive-deftly-macros 1.2.0",
+ "derive-deftly-macros",
  "heck",
-]
-
-[[package]]
-name = "derive-deftly-macros"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "357422a457ccb850dc8f1c1680e0670079560feaad6c2e247e3f345c4fab8a3f"
-dependencies = [
- "heck",
- "indexmap 2.11.4",
- "itertools 0.14.0",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "sha3",
- "strum 0.27.2",
- "syn 2.0.106",
- "void",
 ]
 
 [[package]]
@@ -2792,7 +2764,7 @@ dependencies = [
  "futures",
  "hex",
  "itertools 0.14.0",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -2902,8 +2874,8 @@ dependencies = [
  "js-sys",
  "jsonrpsee-core",
  "lightning",
- "lightning-invoice",
- "lightning-types",
+ "lightning-invoice 0.33.2",
+ "lightning-types 0.2.0",
  "macro_rules_attribute",
  "miniscript",
  "n0-future 0.1.3",
@@ -3016,7 +2988,7 @@ dependencies = [
  "fedimint-lnv2-common",
  "fedimint-mint-client",
  "fedimint-wallet-client",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "serde",
  "serde_json",
 ]
@@ -3052,7 +3024,7 @@ dependencies = [
  "fedimint-logging",
  "futures",
  "itertools 0.14.0",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "lnurl-rs",
  "rand 0.8.5",
  "reqwest",
@@ -3076,7 +3048,7 @@ dependencies = [
  "fedimint-core",
  "fedimint-threshold-crypto",
  "lightning",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "serde",
  "serde-big-array",
  "serde_json",
@@ -3131,7 +3103,7 @@ dependencies = [
  "fedimint-tpe",
  "futures",
  "itertools 0.14.0",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -3154,7 +3126,7 @@ dependencies = [
  "fedimint-ln-common",
  "fedimint-tpe",
  "group",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "lnurl-rs",
  "rand 0.8.5",
  "reqwest",
@@ -3182,7 +3154,7 @@ dependencies = [
  "fedimint-lnv2-common",
  "fedimint-tpe",
  "futures",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -6145,8 +6117,8 @@ dependencies = [
  "dnssec-prover",
  "hashbrown 0.13.2",
  "libm",
- "lightning-invoice",
- "lightning-types",
+ "lightning-invoice 0.33.2",
+ "lightning-types 0.2.0",
  "possiblyrandom",
 ]
 
@@ -6158,8 +6130,19 @@ checksum = "11209f386879b97198b2bfc9e9c1e5d42870825c6bd4376f17f95357244d6600"
 dependencies = [
  "bech32",
  "bitcoin",
- "lightning-types",
+ "lightning-types 0.2.0",
  "serde",
+]
+
+[[package]]
+name = "lightning-invoice"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b85e5e14bcdb30d746e9785b04f27938292e8944f78f26517e01e91691f6b3f2"
+dependencies = [
+ "bech32",
+ "bitcoin",
+ "lightning-types 0.3.0",
 ]
 
 [[package]]
@@ -6167,6 +6150,15 @@ name = "lightning-types"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2cd84d4e71472035903e43caded8ecc123066ce466329ccd5ae537a8d5488c7"
+dependencies = [
+ "bitcoin",
+]
+
+[[package]]
+name = "lightning-types"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5681708d3075bdff3a1b4daa400590e2703e7871bdc14e94ee7334fb6314ae40"
 dependencies = [
  "bitcoin",
 ]
@@ -8095,10 +8087,10 @@ version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e2023f41b5fcb7c30eb5300a5733edfaa9e0e0d502d51b586f65633fd39e40c"
 dependencies = [
- "derive-deftly 0.14.6",
+ "derive-deftly",
  "libc",
  "paste",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -10271,7 +10263,7 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28240d2b739ecba7514c92c0e42f2b5b81a95b5286366bdb2c2f8ef526a5578c"
 dependencies = [
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "educe",
  "futures",
  "oneshot-fused-workaround",
@@ -10307,7 +10299,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d08b5b2e93fd21a4aaa9a3867962ea82f5dc830522737183abb514bdeae9fc9"
 dependencies = [
  "bytes",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "digest",
  "educe",
  "getrandom 0.3.3",
@@ -10328,7 +10320,7 @@ dependencies = [
  "bitflags 2.9.4",
  "bytes",
  "caret",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "educe",
  "paste",
@@ -10467,7 +10459,7 @@ checksum = "3852d0e3a6ca41ab9fed79fa4cb89347bdb24bcd5f6665f506a10b993ac24e8b"
 dependencies = [
  "amplify",
  "cfg-if",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_builder_fork_arti",
  "educe",
  "either",
@@ -10636,7 +10628,7 @@ checksum = "aef0ad8a7ba30210b9c5664e10c423cc19f83d55fafdf1c84097be3a01d0dacd"
 dependencies = [
  "amplify",
  "base64ct",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_builder_fork_arti",
  "derive_more 2.1.0",
  "dyn-clone",
@@ -10677,7 +10669,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a0ed4b8790cf8849d10c7ff13db3ec570c2a4aec68331dfe6e1f05d2987d40d"
 dependencies = [
  "async-trait",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "educe",
  "either",
@@ -10721,7 +10713,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "163e60a7c8069ea8d8a3031be8620047b21cbed7d535fd9f1662daae7803ccd6"
 dependencies = [
  "data-encoding",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "digest",
  "hex",
@@ -10750,7 +10742,7 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b1ddfa5126b2619a9f27b5c5d1a360acf41f15d99ced37af1f30fc449c65889"
 dependencies = [
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "downcast-rs",
  "paste",
@@ -10774,7 +10766,7 @@ dependencies = [
  "amplify",
  "arrayvec",
  "cfg-if",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_builder_fork_arti",
  "derive_more 2.1.0",
  "downcast-rs",
@@ -10814,7 +10806,7 @@ dependencies = [
  "base64ct",
  "by_address",
  "caret",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_builder_fork_arti",
  "derive_more 2.1.0",
  "hex",
@@ -10843,7 +10835,7 @@ dependencies = [
  "ctr",
  "curve25519-dalek",
  "der-parser 10.0.0",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "digest",
  "ed25519-dalek",
@@ -10893,7 +10885,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f015b156dc186601f46b3f89ebd6ace49ef3b142c9a5004559e5d75a6477cc1f"
 dependencies = [
  "cfg-if",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "dyn-clone",
  "educe",
@@ -10999,7 +10991,7 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e899d9dd8104fae50c33f15e00a1515bee15683ff0017cfc003315fcd6a195d6"
 dependencies = [
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "filetime",
  "fs-mistrust",
@@ -11035,7 +11027,7 @@ dependencies = [
  "cipher",
  "coarsetime",
  "criterion-cycles-per-byte",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_builder_fork_arti",
  "derive_more 2.1.0",
  "digest",
@@ -11149,7 +11141,7 @@ dependencies = [
  "amplify",
  "assert_matches",
  "async-trait",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "educe",
  "futures",
@@ -11177,7 +11169,7 @@ checksum = "e5b33285d16e5695b6aba7c9656387ab0c662781e2911376887b8b61d1a3d2b2"
 dependencies = [
  "amplify",
  "caret",
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "educe",
  "safelog",
  "subtle",
@@ -11192,7 +11184,7 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40e61ae922f0f0209338d63afd4b1b4ba780313b427a54dda212ca3853845578"
 dependencies = [
- "derive-deftly 1.2.0",
+ "derive-deftly",
  "derive_more 2.1.0",
  "serde",
  "thiserror 2.0.17",
@@ -11601,7 +11593,7 @@ dependencies = [
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
- "lightning-invoice",
+ "lightning-invoice 0.34.0",
  "n0-future 0.3.0",
  "quic-rpc",
  "rand 0.8.5",
