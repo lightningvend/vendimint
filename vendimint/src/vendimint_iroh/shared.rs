@@ -10,12 +10,11 @@ use iroh::{
     endpoint::Connection,
     protocol::{Router, RouterBuilder},
 };
-use iroh_blobs::{ALPN as BLOBS_ALPN, net_protocol::Blobs};
+use iroh_blobs::{ALPN as BLOBS_ALPN, BlobsProtocol, store::fs::FsStore};
 use iroh_docs::{ALPN as DOCS_ALPN, protocol::Docs};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, net::Gossip};
-use rand::rngs::OsRng;
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 pub const CLAIMABLE_CONTRACT_PREFIX: [u8; 2] = [0x01, 0xFF];
 pub const MACHINE_CONFIG_KEY: [u8; 2] = [0x02, 0xFF];
@@ -60,10 +59,10 @@ impl KvEntry {
     pub(crate) async fn from_iroh_entry(
         entry: iroh_docs::sync::Entry,
         reader_device: KvEntryAuthor,
-        blobs: &iroh_blobs::net_protocol::Blobs<iroh_blobs::store::fs::Store>,
-        docs: &iroh_docs::protocol::Docs<iroh_blobs::store::fs::Store>,
+        blobs: &BlobsProtocol,
+        docs: &Docs,
     ) -> anyhow::Result<Self> {
-        let value = blobs.client().read_to_bytes(entry.content_hash()).await?;
+        let value = blobs.get_bytes(entry.content_hash()).await?;
 
         let full_key = entry.key();
         let user_key = if full_key.starts_with(&KV_PREFIX) {
@@ -76,7 +75,7 @@ impl KvEntry {
         // Only two devices can write to a given KV store: a machine
         // and its manager. If the current device didn't originally
         // create the entry, then the other device must have.
-        let author = if entry.author() == docs.client().authors().default().await? {
+        let author = if entry.author() == docs.author_default().await? {
             reader_device
         } else {
             // The author must be the opposite of `reader_device`.
@@ -97,29 +96,27 @@ impl KvEntry {
 
 pub struct SharedProtocol {
     pub router_builder: RouterBuilder,
-    pub blobs: Blobs<iroh_blobs::store::fs::Store>,
-    pub docs: Docs<iroh_blobs::store::fs::Store>,
+    pub blobs: BlobsProtocol,
+    pub docs: Docs,
     pub app_storage_path: PathBuf,
 }
 
 impl SharedProtocol {
     pub async fn new(storage_path: &Path) -> anyhow::Result<Self> {
         let secret_key_path = storage_path.join(SECRET_KEY_FILE);
-        let secret_key = if let Ok(key_str) = tokio::fs::read_to_string(&secret_key_path).await {
-            SecretKey::from_str(key_str.trim())?
+        let secret_key = if let Ok(key_bytes) = tokio::fs::read(&secret_key_path).await {
+            // TODO: Handle `.unwrap()`.
+            SecretKey::from_bytes(&key_bytes.try_into().unwrap())
         } else {
-            let key = SecretKey::generate(OsRng);
+            let mut rng = OsRng;
+            let mut key_bytes = [0u8; 32];
+            rng.fill_bytes(&mut key_bytes);
             tokio::fs::create_dir_all(storage_path).await?;
-            tokio::fs::write(&secret_key_path, key.to_string()).await?;
-            key
+            tokio::fs::write(&secret_key_path, &key_bytes).await?;
+            SecretKey::from_bytes(&key_bytes)
         };
 
-        let endpoint = Endpoint::builder()
-            .secret_key(secret_key)
-            .discovery_n0()
-            .discovery_local_network()
-            .bind()
-            .await?;
+        let endpoint = Endpoint::builder().secret_key(secret_key).bind().await?;
 
         let builder = Router::builder(endpoint);
 
@@ -129,14 +126,17 @@ impl SharedProtocol {
         tokio::fs::create_dir_all(&iroh_storage_path).await?;
         tokio::fs::create_dir_all(&app_storage_path).await?;
 
-        let blobs = Blobs::persistent(&iroh_storage_path)
-            .await?
-            .build(builder.endpoint());
+        let blobs_store = FsStore::load(&iroh_storage_path).await?;
+        let blobs = BlobsProtocol::new(&blobs_store, None);
 
-        let gossip = Gossip::builder().spawn(builder.endpoint().clone()).await?;
+        let gossip = Gossip::builder().spawn(builder.endpoint().clone());
 
-        let docs = Docs::persistent(iroh_storage_path)
-            .spawn(&blobs, &gossip)
+        let docs = Docs::persistent(iroh_storage_path.clone())
+            .spawn(
+                builder.endpoint().clone(),
+                blobs.store().clone(),
+                gossip.clone(),
+            )
             .await?;
 
         let router_builder = builder
