@@ -67,21 +67,13 @@ mod tests {
         manager_accepts: bool,
     ) -> anyhow::Result<(u32, MachineProtocol, ManagerProtocol)> {
         let machine_addr = machine_protocol.node_addr().await?;
-        let manager_task = tokio::spawn(async move {
-            let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
-            tx_mgr.send(manager_accepts).unwrap();
-            (pin_mgr, manager_protocol)
-        });
-        let machine_task = tokio::spawn(async move {
-            let (pin_machine, tx_machine) = machine_protocol
-                .await_next_incoming_claim_request()
-                .await
-                .unwrap();
-            tx_machine.send(machine_accepts).unwrap();
-            (pin_machine, machine_protocol)
-        });
-        let ((pin_mgr, manager_protocol), (pin_machine, machine_protocol)) =
-            tokio::try_join!(manager_task, machine_task)?;
+        let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
+        let (pin_machine, tx_machine) = machine_protocol
+            .await_next_incoming_claim_request()
+            .await
+            .unwrap();
+        tx_machine.send(machine_accepts).unwrap();
+        tx_mgr.send(manager_accepts).unwrap();
         assert_eq!(pin_mgr, pin_machine);
 
         Ok((pin_mgr, machine_protocol, manager_protocol))
