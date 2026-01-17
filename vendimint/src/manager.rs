@@ -8,7 +8,7 @@ use bitcoin::Network;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
-use iroh::{NodeAddr, NodeId};
+use iroh::{EndpointAddr, EndpointId};
 use serde::Serialize;
 use tokio::sync::oneshot;
 
@@ -93,7 +93,7 @@ impl Manager {
         self.iroh_protocol.is_shutdown() && self.syncer_task_handle.is_none()
     }
 
-    /// Claims a machine by connecting to it via its node address.
+    /// Claims a machine by connecting to it via its endpoint address.
     ///
     /// Returns a claim ID and a sender to accept/reject the claim.
     /// The claim ID should be verified against the one displayed on the machine
@@ -101,13 +101,13 @@ impl Manager {
     /// the sender to accept the claim, or `false` to reject it.
     pub async fn claim_machine(
         &self,
-        node_addr: NodeAddr,
+        endpoint_addr: EndpointAddr,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
-        self.iroh_protocol.claim_machine(node_addr).await
+        self.iroh_protocol.claim_machine(endpoint_addr).await
     }
 
-    /// Lists the node IDs of all machines claimed by this manager.
-    pub async fn list_machine_ids(&self) -> std::io::Result<Vec<NodeId>> {
+    /// Lists the endpoint IDs of all machines claimed by this manager.
+    pub async fn list_machine_ids(&self) -> std::io::Result<Vec<EndpointId>> {
         Ok(self
             .iroh_protocol
             .list_machines()
@@ -122,7 +122,7 @@ impl Manager {
     /// Returns `Some` if the machine is configured, `None` otherwise.
     pub async fn get_machine_config(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
     ) -> anyhow::Result<Option<MachineConfig>> {
         self.iroh_protocol.get_machine_config(machine_id).await
     }
@@ -253,7 +253,7 @@ impl Manager {
     /// the context of vendimint - its meaning is up to the API caller.
     pub async fn get_kv_value(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
         key: impl AsRef<[u8]>,
     ) -> anyhow::Result<Option<KvEntry>> {
         self.iroh_protocol.get_kv_value(machine_id, key).await
@@ -266,7 +266,7 @@ impl Manager {
     /// the context of vendimint - its meaning is up to the API caller.
     pub async fn set_kv_value(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> anyhow::Result<()> {
@@ -280,7 +280,7 @@ impl Manager {
     /// KV data is stored on an auto-syncing key/value store shared
     /// between a machine and its manager. It has no meaning within
     /// the context of vendimint - its meaning is up to the API caller.
-    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<KvEntry>> {
+    pub async fn get_kv_entries(&self, machine_id: &EndpointId) -> anyhow::Result<Vec<KvEntry>> {
         self.iroh_protocol.get_kv_entries(machine_id).await
     }
 }

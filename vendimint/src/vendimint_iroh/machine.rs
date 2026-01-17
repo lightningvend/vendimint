@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -7,23 +8,20 @@ use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
 use iroh::{
-    NodeAddr, PublicKey,
+    EndpointAddr, PublicKey,
     endpoint::Connection,
-    protocol::{ProtocolHandler, Router},
+    protocol::{AcceptError, ProtocolHandler, Router},
 };
-use iroh_blobs::net_protocol::Blobs;
+use iroh_blobs::BlobsProtocol;
 use iroh_docs::protocol::Docs;
 use iroh_docs::{
     DocTicket,
-    rpc::{
-        AddrInfoOptions,
-        client::docs::{Doc, ShareMode},
-        proto::RpcService,
+    api::{
+        Doc,
+        protocol::{AddrInfoOptions, ShareMode},
     },
     store::{QueryBuilder, SingleLatestPerKeyQuery},
 };
-use n0_future::boxed::BoxFuture;
-use quic_rpc::client::FlumeConnector;
 use tokio::{
     io::AsyncWriteExt,
     sync::{Mutex, mpsc, oneshot},
@@ -41,8 +39,8 @@ const MACHINE_MANAGER_PUBLIC_KEY_PATH: &str = "machine_manager_public_key.json";
 
 pub struct MachineProtocol {
     router: Router,
-    blobs: Blobs<iroh_blobs::store::fs::Store>,
-    docs: Docs<iroh_blobs::store::fs::Store>,
+    blobs: BlobsProtocol,
+    docs: Docs,
     app_storage_path: PathBuf,
     claim_request_receiver: Mutex<mpsc::Receiver<(u32, oneshot::Sender<bool>)>>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
@@ -55,25 +53,44 @@ pub enum MachineState {
     /// by the manager, or `None` if unconfigured.
     Claimed(Option<MachineConfig>),
     /// The machine is unclaimed.
-    Unclaimed(NodeAddr),
+    Unclaimed(EndpointAddr),
 }
 
 #[derive(Clone, Debug)]
 struct ClaimHandler {
-    docs: Docs<iroh_blobs::store::fs::Store>,
+    docs: Docs,
     app_storage_path: PathBuf,
     claim_request_sender: mpsc::Sender<(u32, oneshot::Sender<bool>)>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
 }
 
+// TODO: Find a way to remove the need for this function.
+fn accept_err(err: impl std::fmt::Display) -> AcceptError {
+    #[derive(Debug)]
+    struct ClaimAcceptError(String);
+
+    impl std::fmt::Display for ClaimAcceptError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl std::error::Error for ClaimAcceptError {}
+
+    AcceptError::from_err(ClaimAcceptError(err.to_string()))
+}
+
 impl ProtocolHandler for ClaimHandler {
-    fn accept(&self, connection: Connection) -> BoxFuture<anyhow::Result<()>> {
+    fn accept(
+        &self,
+        connection: Connection,
+    ) -> impl Future<Output = Result<(), AcceptError>> + Send {
         let this = self.clone();
 
-        Box::pin(async move {
+        async move {
             let mut claimed_manager_pubkey_lock = this.claimed_manager_pubkey.lock().await;
 
-            let claimer_pubkey = connection.remote_node_id()?;
+            let claimer_pubkey = connection.remote_id();
 
             if let Some(claimed_manager_pubkey) = claimed_manager_pubkey_lock.as_ref() {
                 // Only close if the claimer is not the original claimer.
@@ -91,7 +108,7 @@ impl ProtocolHandler for ClaimHandler {
             this.claim_request_sender
                 .send((pin, tx))
                 .await
-                .map_err(|_| anyhow::anyhow!("receiver dropped"))?;
+                .map_err(AcceptError::from_err)?;
 
             if rx.await.unwrap_or(false) {
                 let (mut send, mut recv) = connection.accept_bi().await?;
@@ -100,26 +117,42 @@ impl ProtocolHandler for ClaimHandler {
                 // that it would like to claim this machine.
                 // Read n + 1 bytes to ensure the magic byte
                 // is the exact correct length, and no more.
-                if recv.read_to_end(PING_MAGIC_BYTES.len() + 1).await? != PING_MAGIC_BYTES {
-                    return Err(anyhow::anyhow!("Invalid manager stream open ping"));
+                if recv
+                    .read_to_end(PING_MAGIC_BYTES.len() + 1)
+                    .await
+                    .map_err(AcceptError::from_err)?
+                    != PING_MAGIC_BYTES
+                {
+                    return Err(AcceptError::from_err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid manager stream open ping",
+                    )));
                 }
 
-                let doc = get_or_create_machine_doc(&this.app_storage_path, &this.docs).await?;
+                let doc = get_or_create_machine_doc(&this.app_storage_path, &this.docs)
+                    .await
+                    .map_err(accept_err)?;
                 let ticket = doc
                     .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
-                    .await?;
+                    .await
+                    .map_err(accept_err)?;
 
                 let manager_public_key_path =
                     this.app_storage_path.join(MACHINE_MANAGER_PUBLIC_KEY_PATH);
-                let claimer_pubkey_str = serde_json::to_string(&claimer_pubkey)?;
+                let claimer_pubkey_str =
+                    serde_json::to_string(&claimer_pubkey).map_err(AcceptError::from_err)?;
                 tokio::fs::write(&manager_public_key_path, claimer_pubkey_str).await?;
                 *claimed_manager_pubkey_lock = Some(claimer_pubkey);
                 drop(claimed_manager_pubkey_lock);
 
-                let ticket_bytes = serde_json::to_vec(&ticket)?;
-                send.write_all(&ticket_bytes).await?;
+                let ticket_bytes = serde_json::to_vec(&ticket).map_err(AcceptError::from_err)?;
+                // TODO: See if we can remove the `map_err` once we're on a future version of iroh.
+                send.write_all(&ticket_bytes)
+                    .await
+                    .map_err(AcceptError::from_err)?;
                 send.finish()?;
-                send.stopped().await?;
+                // TODO: See if we can remove the `map_err` once we're on a future version of iroh.
+                send.stopped().await.map_err(AcceptError::from_err)?;
                 send.shutdown().await?;
                 connection.close(0u32.into(), b"finished");
             } else {
@@ -127,7 +160,7 @@ impl ProtocolHandler for ClaimHandler {
             }
 
             Ok(())
-        })
+        }
     }
 }
 
@@ -159,7 +192,7 @@ impl MachineProtocol {
         shared_protocol.router_builder = shared_protocol.router_builder.accept(CLAIM_ALPN, handler);
 
         Ok(Self {
-            router: shared_protocol.router_builder.spawn().await?,
+            router: shared_protocol.router_builder.spawn(),
             blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
@@ -187,16 +220,14 @@ impl MachineProtocol {
         if claimed_manager_pubkey.is_some() {
             Ok(MachineState::Claimed(self.get_machine_config().await?))
         } else {
-            Ok(MachineState::Unclaimed(
-                self.router.endpoint().node_addr().await?,
-            ))
+            Ok(MachineState::Unclaimed(self.router.endpoint().addr()))
         }
     }
 
     // TODO: Get rid of this method and use `get_machine_state` instead.
     #[cfg(test)]
-    pub async fn node_addr(&self) -> anyhow::Result<NodeAddr> {
-        self.router.endpoint().node_addr().await
+    pub fn endpoint_addr(&self) -> EndpointAddr {
+        self.router.endpoint().addr()
     }
 
     pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
@@ -216,7 +247,7 @@ impl MachineProtocol {
         );
 
         doc.set_bytes(
-            self.docs.client().authors().default().await?,
+            self.docs.author_default().await?,
             key,
             serde_json::to_vec(claimable_contract)?,
         )
@@ -238,18 +269,14 @@ impl MachineProtocol {
             return Ok(None);
         };
 
-        let bytes = self
-            .blobs
-            .client()
-            .read_to_bytes(entry.content_hash())
-            .await?;
+        let bytes = self.blobs.get_bytes(entry.content_hash()).await?;
 
         Ok(Some(serde_json::from_slice(&bytes)?))
     }
 
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data
     /// related to payments received to the current device. Should only be called on a machine.
-    async fn get_or_create_machine_doc(&self) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
+    async fn get_or_create_machine_doc(&self) -> anyhow::Result<Doc> {
         get_or_create_machine_doc(&self.app_storage_path, &self.docs).await
     }
 
@@ -283,7 +310,7 @@ impl MachineProtocol {
         full_key.extend_from_slice(key.as_ref());
 
         doc.set_bytes(
-            self.docs.client().authors().default().await?,
+            self.docs.author_default().await?,
             full_key,
             value.as_ref().to_vec(),
         )
@@ -296,13 +323,14 @@ impl MachineProtocol {
         let doc = self.get_or_create_machine_doc().await?;
 
         let mut entries = Vec::new();
-        let mut entry_stream = doc
+        let entry_stream = doc
             .get_many(
                 QueryBuilder::<SingleLatestPerKeyQuery>::default()
                     .key_prefix(KV_PREFIX)
                     .build(),
             )
             .await?;
+        futures_util::pin_mut!(entry_stream);
 
         while let Some(entry_result) = entry_stream.next().await {
             entries.push(
@@ -326,10 +354,7 @@ impl MachineProtocol {
 }
 
 // TODO: Perform this with a lock to prevent race conditions.
-async fn get_or_create_machine_doc(
-    app_storage_path: &Path,
-    docs: &Docs<iroh_blobs::store::fs::Store>,
-) -> anyhow::Result<Doc<FlumeConnector<RpcService>>> {
+async fn get_or_create_machine_doc(app_storage_path: &Path, docs: &Docs) -> anyhow::Result<Doc> {
     tokio::fs::create_dir_all(app_storage_path).await?;
 
     let doc_ticket_path = app_storage_path.join(MACHINE_DOC_TICKET_PATH);
@@ -341,13 +366,12 @@ async fn get_or_create_machine_doc(
 
     if let Some(doc_ticket) = doc_ticket_or {
         return docs
-            .client()
             .open(doc_ticket.capability.id())
             .await
             .map(|doc_or| doc_or.unwrap());
     }
 
-    let new_doc = docs.client().create().await?;
+    let new_doc = docs.create().await?;
 
     // Save the doc ticket to a file for later use.
     let new_doc_ticket = new_doc.share(ShareMode::Write, AddrInfoOptions::Id).await?;
@@ -366,7 +390,7 @@ mod tests {
         let storage_path = tempfile::tempdir().unwrap();
         let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
 
-        let node_addr = machine_protocol.node_addr().await?;
+        let endpoint_addr = machine_protocol.endpoint_addr();
 
         // Shutdown and restart to test basic persistence.
         machine_protocol.shutdown().await?;
@@ -374,10 +398,7 @@ mod tests {
 
         let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
 
-        assert_eq!(
-            machine_protocol.node_addr().await?.node_id,
-            node_addr.node_id
-        );
+        assert_eq!(machine_protocol.endpoint_addr().id, endpoint_addr.id);
 
         Ok(())
     }

@@ -19,7 +19,7 @@ mod tests {
     };
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use fedimint_lnv2_remote_client::ClaimableContract;
-    use iroh::NodeId;
+    use iroh::EndpointId;
     use tokio::time::Instant;
     use tpe::{AggregatePublicKey, G1Affine};
 
@@ -66,7 +66,7 @@ mod tests {
         machine_accepts: bool,
         manager_accepts: bool,
     ) -> anyhow::Result<(u32, MachineProtocol, ManagerProtocol)> {
-        let machine_addr = machine_protocol.node_addr().await?;
+        let machine_addr = machine_protocol.endpoint_addr();
         let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
         let (pin_machine, tx_machine) = machine_protocol
             .await_next_incoming_claim_request()
@@ -135,7 +135,7 @@ mod tests {
     struct KvTestFixture {
         machine_protocol: MachineProtocol,
         manager_protocol: ManagerProtocol,
-        machine_id: NodeId,
+        machine_id: EndpointId,
 
         /// Held to prevent the tempdir from being deleted.
         _machine_temp: tempfile::TempDir,
@@ -254,11 +254,11 @@ mod tests {
         .unwrap()
     }
 
-    /// Helper to create a dummy `NodeId` for testing
-    fn create_dummy_node_id() -> iroh::NodeId {
-        // Use a dummy string that represents a valid NodeId
+    /// Helper to create a dummy `EndpointId` for testing
+    fn create_dummy_endpoint_id() -> EndpointId {
+        // Use a dummy string that represents a valid `EndpointId`.
         let dummy_hex = "0101010101010101010101010101010101010101010101010101010101010101";
-        iroh::NodeId::from_str(dummy_hex).unwrap()
+        EndpointId::from_str(dummy_hex).unwrap()
     }
 
     /// Helper to create standard test machine config
@@ -309,18 +309,18 @@ mod tests {
         // Assert the machine sees the manager as its manager.
         assert_eq!(
             machine_protocol.get_manager_pubkey().await,
-            Some(manager_protocol.get_public_key().await?),
+            Some(manager_protocol.get_public_key()),
             "Machine should be claimed by the specified manager"
         );
 
         // Assert the manager sees the machine as its machine.
-        let machine_node_id = machine_protocol.node_addr().await?.node_id;
+        let machine_endpoint_id = machine_protocol.endpoint_addr().id;
         assert!(
             manager_protocol
                 .list_machines()
                 .await?
                 .into_iter()
-                .any(|(pubkey, _)| pubkey == machine_node_id),
+                .any(|(pubkey, _)| pubkey == machine_endpoint_id),
             "Manager should own the machine"
         );
         Ok(())
@@ -330,7 +330,7 @@ mod tests {
     async fn set_and_verify_machine_config(
         machine_protocol: &MachineProtocol,
         manager_protocol: &ManagerProtocol,
-        machine_id: &iroh::NodeId,
+        machine_id: &EndpointId,
         config: &MachineConfig,
     ) -> anyhow::Result<()> {
         manager_protocol
@@ -376,7 +376,7 @@ mod tests {
     /// Helper to spawn a manager claim task
     fn spawn_manager_claim_task(
         manager_protocol: ManagerProtocol,
-        machine_addr: iroh::NodeAddr,
+        machine_addr: iroh::EndpointAddr,
     ) -> tokio::task::JoinHandle<(u32, ManagerProtocol)> {
         tokio::spawn(async move {
             let (pin, tx) = manager_protocol.claim_machine(machine_addr).await.unwrap();
@@ -487,7 +487,7 @@ mod tests {
         assert_machine_claimed_by_manager(&machine_protocol, &manager1_protocol).await?;
 
         // Second manager attempts to claim
-        let machine_addr2 = machine_protocol.node_addr().await?;
+        let machine_addr2 = machine_protocol.endpoint_addr();
         let (_pin_mgr2, tx_mgr2) = manager2_protocol.claim_machine(machine_addr2).await?;
         tx_mgr2.send(true).unwrap();
 
@@ -495,7 +495,7 @@ mod tests {
 
         assert_eq!(
             machine_protocol.get_manager_pubkey().await,
-            Some(manager1_protocol.get_public_key().await?)
+            Some(manager1_protocol.get_public_key())
         );
         assert_eq!(manager2_protocol.list_machines().await?.len(), 0);
 
@@ -568,7 +568,7 @@ mod tests {
         let manager_storage_path = tempfile::tempdir()?;
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
-        let addr_before = machine_protocol.node_addr().await?;
+        let addr_before = machine_protocol.endpoint_addr();
         let (_pin, machine_protocol, manager_protocol) =
             perform_claim(machine_protocol, manager_protocol, true, true).await?;
 
@@ -579,12 +579,12 @@ mod tests {
         drop(machine_protocol);
 
         let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
-        let addr_after = machine_protocol.node_addr().await?;
+        let addr_after = machine_protocol.endpoint_addr();
 
-        assert_eq!(addr_before.node_id, addr_after.node_id);
+        assert_eq!(addr_before.id, addr_after.id);
         assert_eq!(
             machine_protocol.get_manager_pubkey().await,
-            Some(manager_protocol.get_public_key().await?),
+            Some(manager_protocol.get_public_key()),
         );
 
         Ok(())
@@ -618,8 +618,10 @@ mod tests {
         let manager_storage_path = tempfile::tempdir()?;
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
-        let dummy_node_id = create_dummy_node_id();
-        let result = manager_protocol.get_machine_config(&dummy_node_id).await;
+        let dummy_endpoint_id = create_dummy_endpoint_id();
+        let result = manager_protocol
+            .get_machine_config(&dummy_endpoint_id)
+            .await;
 
         assert!(
             result.is_err(),
@@ -635,9 +637,9 @@ mod tests {
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
         let machine_config = create_test_machine_config();
-        let dummy_node_id = create_dummy_node_id();
+        let dummy_endpoint_id = create_dummy_endpoint_id();
         let result = manager_protocol
-            .set_machine_config(&dummy_node_id, &machine_config)
+            .set_machine_config(&dummy_endpoint_id, &machine_config)
             .await;
 
         assert!(
@@ -783,7 +785,7 @@ mod tests {
         let (machine_protocol, manager_protocol, _machine_temp, _manager_temp) =
             create_machine_manager_pair().await?;
 
-        let machine_addr = machine_protocol.node_addr().await?;
+        let machine_addr = machine_protocol.endpoint_addr();
 
         // Start claim process to get the pin
         let manager_task =
@@ -847,7 +849,7 @@ mod tests {
             temp_dirs.push(manager_storage_path); // Keep temp dir alive
         }
 
-        let machine_addr = machine_protocol.node_addr().await?;
+        let machine_addr = machine_protocol.endpoint_addr();
 
         let machine_protocol_arc = Arc::new(machine_protocol);
 
@@ -923,7 +925,7 @@ mod tests {
 
         assert_eq!(
             machine_protocol_arc.get_manager_pubkey().await,
-            Some(winning_manager.get_public_key().await?),
+            Some(winning_manager.get_public_key()),
             "Machine should be claimed by the winning manager"
         );
 
@@ -993,8 +995,8 @@ mod tests {
         let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
         let manager_protocol = ManagerProtocol::new(manager_storage_path.path()).await?;
 
-        let machine_addr = machine_protocol.node_addr().await?;
-        let original_node_id = machine_addr.node_id;
+        let machine_addr = machine_protocol.endpoint_addr();
+        let original_endpoint_id = machine_addr.id;
 
         let (_pin, machine_protocol, manager_protocol) =
             perform_claim(machine_protocol, manager_protocol, true, true).await?;
@@ -1008,16 +1010,13 @@ mod tests {
         // Restart machine
         let machine_protocol = MachineProtocol::new(machine_storage_path.path()).await?;
 
-        // Should have same node ID (tests key persistence)
-        assert_eq!(
-            machine_protocol.node_addr().await?.node_id,
-            original_node_id
-        );
+        // Should have same endpoint ID (tests key persistence)
+        assert_eq!(machine_protocol.endpoint_addr().id, original_endpoint_id);
 
         // Should still be claimed by the same manager (tests claim state persistence)
         assert_eq!(
             machine_protocol.get_manager_pubkey().await,
-            Some(manager_protocol.get_public_key().await?)
+            Some(manager_protocol.get_public_key())
         );
 
         Ok(())

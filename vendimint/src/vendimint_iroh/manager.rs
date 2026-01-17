@@ -1,12 +1,12 @@
-use fedimint_core::{config::FederationId, db::DatabaseValue};
+use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
 
 use iroh::{
-    NodeAddr, NodeId,
+    EndpointAddr, EndpointId,
     protocol::{ProtocolHandler, Router},
 };
-use iroh_blobs::net_protocol::Blobs;
+use iroh_blobs::BlobsProtocol;
 use iroh_docs::{
     Capability, DocTicket,
     protocol::Docs,
@@ -30,8 +30,8 @@ const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
 
 pub struct ManagerProtocol {
     router: Router,
-    blobs: Blobs<iroh_blobs::store::fs::Store>,
-    docs: Docs<iroh_blobs::store::fs::Store>,
+    blobs: BlobsProtocol,
+    docs: Docs,
     app_storage_path: PathBuf,
 }
 
@@ -40,7 +40,7 @@ impl ManagerProtocol {
         let shared_protocol = SharedProtocol::new(storage_path).await?;
 
         let manager_protocol = Self {
-            router: shared_protocol.router_builder.spawn().await?,
+            router: shared_protocol.router_builder.spawn(),
             blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
@@ -67,14 +67,14 @@ impl ManagerProtocol {
 
     pub async fn claim_machine(
         &self,
-        node_addr: NodeAddr,
+        endpoint_addr: EndpointAddr,
     ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
-        let machine_id = node_addr.node_id;
+        let machine_id = endpoint_addr.id;
 
         let conn = self
             .router
             .endpoint()
-            .connect(node_addr, CLAIM_ALPN)
+            .connect(endpoint_addr, CLAIM_ALPN)
             .await?;
 
         let pin = claim_pin_from_keying_material(&conn);
@@ -100,7 +100,7 @@ impl ManagerProtocol {
                     && let Ok(machine_doc_ticket) = serde_json::from_slice::<DocTicket>(&bytes)
                     && matches!(machine_doc_ticket.capability, Capability::Write(_))
                 {
-                    let _ = docs.client().import(machine_doc_ticket.clone()).await;
+                    let _ = docs.import(machine_doc_ticket.clone()).await;
                     let _ = tokio::fs::write(
                         machine_doc_ticket_path.join(machine_id.to_string()),
                         serde_json::to_string(&machine_doc_ticket).unwrap(),
@@ -118,7 +118,7 @@ impl ManagerProtocol {
         Ok((pin, tx))
     }
 
-    async fn get_machine(&self, machine_id: &NodeId) -> anyhow::Result<DocTicket> {
+    async fn get_machine(&self, machine_id: &EndpointId) -> anyhow::Result<DocTicket> {
         let machine_doc_ticket_path = self
             .get_machine_doc_ticket_path()
             .join(machine_id.to_string());
@@ -127,7 +127,7 @@ impl ManagerProtocol {
         Ok(machine_doc_ticket)
     }
 
-    pub async fn list_machines(&self) -> std::io::Result<Vec<(NodeId, DocTicket)>> {
+    pub async fn list_machines(&self) -> std::io::Result<Vec<(EndpointId, DocTicket)>> {
         let machine_doc_tickets_path = self.get_machine_doc_ticket_path();
         let mut machines = Vec::new();
 
@@ -135,7 +135,7 @@ impl ManagerProtocol {
         while let Some(entry) = read_dir.next_entry().await? {
             if entry.file_type().await?.is_file() {
                 let file_name = entry.file_name().into_string().unwrap();
-                let machine_id = NodeId::from_str(&file_name).unwrap();
+                let machine_id = EndpointId::from_str(&file_name).unwrap();
                 let machine_doc_ticket_str = tokio::fs::read_to_string(entry.path()).await?;
                 let machine_doc_ticket: DocTicket =
                     serde_json::from_str(&machine_doc_ticket_str).unwrap();
@@ -148,51 +148,44 @@ impl ManagerProtocol {
 
     pub async fn get_machine_config(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
     ) -> anyhow::Result<Option<MachineConfig>> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
-            .client()
             .open(machine_doc_ticket.capability.id())
             .await?
             .unwrap();
 
         let Some(entry) = machine_doc
             .get_one(
-                QueryBuilder::<SingleLatestPerKeyQuery>::default()
-                    .key_exact(MACHINE_CONFIG_KEY.to_bytes()),
+                QueryBuilder::<SingleLatestPerKeyQuery>::default().key_exact(MACHINE_CONFIG_KEY),
             )
             .await?
         else {
             return Ok(None);
         };
 
-        let bytes = self
-            .blobs
-            .client()
-            .read_to_bytes(entry.content_hash())
-            .await?;
+        let bytes = self.blobs.get_bytes(entry.content_hash()).await?;
 
         Ok(Some(serde_json::from_slice(&bytes)?))
     }
 
     pub async fn set_machine_config(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
         machine_config: &MachineConfig,
     ) -> anyhow::Result<()> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
-            .client()
             .open(machine_doc_ticket.capability.id())
             .await?
             .unwrap();
         machine_doc
             .set_bytes(
-                self.docs.client().authors().default().await?,
-                MACHINE_CONFIG_KEY.to_bytes(),
+                self.docs.author_default().await?,
+                MACHINE_CONFIG_KEY.to_vec(),
                 serde_json::to_vec(machine_config)?,
             )
             .await?;
@@ -201,18 +194,17 @@ impl ManagerProtocol {
 
     pub async fn get_claimable_contracts(
         &self,
-    ) -> anyhow::Result<Vec<(NodeId, FederationId, ClaimableContract)>> {
+    ) -> anyhow::Result<Vec<(EndpointId, FederationId, ClaimableContract)>> {
         let mut payments = Vec::new();
 
         for (machine_id, machine_doc_ticket) in self.list_machines().await? {
             let machine_doc = self
                 .docs
-                .client()
                 .open(machine_doc_ticket.capability.id())
                 .await?
                 .unwrap();
 
-            let mut contract_stream = machine_doc
+            let contract_stream = machine_doc
                 .get_many(
                     // Note: Queries exclude empty values by default.
                     QueryBuilder::<SingleLatestPerKeyQuery>::default()
@@ -220,6 +212,7 @@ impl ManagerProtocol {
                         .build(),
                 )
                 .await?;
+            futures_util::pin_mut!(contract_stream);
 
             while let Some(entry_or) = contract_stream.next().await {
                 let Ok(entry) = entry_or else {
@@ -232,11 +225,7 @@ impl ManagerProtocol {
                     continue;
                 };
 
-                let bytes = self
-                    .blobs
-                    .client()
-                    .read_to_bytes(entry.content_hash())
-                    .await?;
+                let bytes = self.blobs.get_bytes(entry.content_hash()).await?;
 
                 // TODO: Add a devimint test to see if this block is necessary.
                 if bytes.is_empty() {
@@ -256,14 +245,14 @@ impl ManagerProtocol {
 
     pub async fn remove_claimable_contracts(
         &self,
-        claimable_contracts: Vec<(NodeId, FederationId, ClaimableContract)>,
+        claimable_contracts: Vec<(EndpointId, FederationId, ClaimableContract)>,
     ) -> anyhow::Result<()> {
-        let author_id = self.docs.client().authors().default().await?;
+        let author_id = self.docs.author_default().await?;
 
         // Fold contracts to be mapped by machine
         // id so we can load each machine doc once.
         let claimable_contracts_by_machine_id: HashMap<
-            NodeId,
+            EndpointId,
             Vec<(FederationId, ClaimableContract)>,
         > = claimable_contracts
             .into_iter()
@@ -276,7 +265,6 @@ impl ManagerProtocol {
             let machine_doc_ticket = self.get_machine(&machine_id).await?;
             let machine_doc = self
                 .docs
-                .client()
                 .open(machine_doc_ticket.capability.id())
                 .await?
                 .unwrap();
@@ -300,13 +288,12 @@ impl ManagerProtocol {
 
     pub async fn get_kv_value(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
         key: impl AsRef<[u8]>,
     ) -> anyhow::Result<Option<KvEntry>> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
-            .client()
             .open(machine_doc_ticket.capability.id())
             .await?
             .unwrap();
@@ -329,14 +316,13 @@ impl ManagerProtocol {
 
     pub async fn set_kv_value(
         &self,
-        machine_id: &NodeId,
+        machine_id: &EndpointId,
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> anyhow::Result<()> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
-            .client()
             .open(machine_doc_ticket.capability.id())
             .await?
             .unwrap();
@@ -346,7 +332,7 @@ impl ManagerProtocol {
 
         machine_doc
             .set_bytes(
-                self.docs.client().authors().default().await?,
+                self.docs.author_default().await?,
                 full_key,
                 value.as_ref().to_vec(),
             )
@@ -355,23 +341,23 @@ impl ManagerProtocol {
         Ok(())
     }
 
-    pub async fn get_kv_entries(&self, machine_id: &NodeId) -> anyhow::Result<Vec<KvEntry>> {
+    pub async fn get_kv_entries(&self, machine_id: &EndpointId) -> anyhow::Result<Vec<KvEntry>> {
         let machine_doc_ticket = self.get_machine(machine_id).await?;
         let machine_doc = self
             .docs
-            .client()
             .open(machine_doc_ticket.capability.id())
             .await?
             .unwrap();
 
         let mut entries = Vec::new();
-        let mut entry_stream = machine_doc
+        let entry_stream = machine_doc
             .get_many(
                 QueryBuilder::<SingleLatestPerKeyQuery>::default()
                     .key_prefix(KV_PREFIX)
                     .build(),
             )
             .await?;
+        futures_util::pin_mut!(entry_stream);
 
         while let Some(entry_result) = entry_stream.next().await {
             entries.push(
@@ -389,7 +375,7 @@ impl ManagerProtocol {
     }
 
     #[cfg(test)]
-    pub async fn get_public_key(&self) -> anyhow::Result<iroh::PublicKey> {
-        Ok(self.router.endpoint().node_addr().await?.node_id)
+    pub fn get_public_key(&self) -> iroh::PublicKey {
+        self.router.endpoint().id()
     }
 }
