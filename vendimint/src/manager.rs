@@ -1,9 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use crate::fedimint_wallet::Wallet;
-use crate::vendimint_iroh::KvEntry;
-use crate::vendimint_iroh::MachineConfig;
-use crate::vendimint_iroh::ManagerProtocol;
+use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, ManagerProtocol};
 use bitcoin::Network;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
@@ -95,14 +93,14 @@ impl Manager {
 
     /// Claims a machine by connecting to it via its endpoint address.
     ///
-    /// Returns a claim ID and a sender to accept/reject the claim.
-    /// The claim ID should be verified against the one displayed on the machine
+    /// Returns a claim PIN and a sender to accept/reject the claim.
+    /// The claim PIN should be verified against the one displayed on the machine
     /// before accepting to prevent claim sniping. Once verified, send `true` to
     /// the sender to accept the claim, or `false` to reject it.
     pub async fn claim_machine(
         &self,
         endpoint_addr: EndpointAddr,
-    ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
+    ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
         self.iroh_protocol.claim_machine(endpoint_addr).await
     }
 

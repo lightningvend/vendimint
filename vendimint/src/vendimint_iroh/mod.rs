@@ -4,7 +4,7 @@ mod shared;
 
 pub use machine::{MachineProtocol, MachineState};
 pub use manager::ManagerProtocol;
-pub use shared::{KvEntry, KvEntryAuthor, MachineConfig};
+pub use shared::{ClaimPin, KvEntry, KvEntryAuthor, MachineConfig};
 
 #[cfg(test)]
 mod tests {
@@ -65,7 +65,7 @@ mod tests {
         manager_protocol: ManagerProtocol,
         machine_accepts: bool,
         manager_accepts: bool,
-    ) -> anyhow::Result<(u32, MachineProtocol, ManagerProtocol)> {
+    ) -> anyhow::Result<(ClaimPin, MachineProtocol, ManagerProtocol)> {
         let machine_addr = machine_protocol.endpoint_addr();
         let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
         let (pin_machine, tx_machine) = machine_protocol
@@ -377,7 +377,7 @@ mod tests {
     fn spawn_manager_claim_task(
         manager_protocol: ManagerProtocol,
         machine_addr: iroh::EndpointAddr,
-    ) -> tokio::task::JoinHandle<(u32, ManagerProtocol)> {
+    ) -> tokio::task::JoinHandle<(ClaimPin, ManagerProtocol)> {
         tokio::spawn(async move {
             let (pin, tx) = manager_protocol.claim_machine(machine_addr).await.unwrap();
             tx.send(true).unwrap();
@@ -804,7 +804,10 @@ mod tests {
 
         // Pins should match and be valid 6-digit numbers
         assert_eq!(pin_mgr, pin_machine);
-        assert!(pin_mgr < 1_000_000, "PIN should be less than 1,000,000");
+        assert!(
+            pin_mgr.as_u32() < 1_000_000,
+            "PIN should be less than 1,000,000"
+        );
 
         Ok(())
     }
@@ -893,7 +896,7 @@ mod tests {
         let pin_machine = machine_pins[0];
 
         // Collect all manager PINs and verify machine PIN matches one of them
-        let manager_pins: Vec<u32> = manager_results.iter().map(|(pin, _)| *pin).collect();
+        let manager_pins: Vec<ClaimPin> = manager_results.iter().map(|(pin, _)| *pin).collect();
         assert!(
             manager_pins.contains(&pin_machine),
             "Machine PIN {pin_machine} should match one of the manager PINs: {manager_pins:?}"

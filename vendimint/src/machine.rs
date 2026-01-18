@@ -1,10 +1,8 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use crate::fedimint_wallet::Wallet;
-use crate::vendimint_iroh::KvEntry;
-use crate::vendimint_iroh::MachineConfig;
-use crate::vendimint_iroh::MachineProtocol;
 pub use crate::vendimint_iroh::MachineState;
+use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, MachineProtocol};
 use bitcoin::Network;
 use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
@@ -128,16 +126,18 @@ impl Machine {
     /// ideally in a loop, to ensure quick alerting of any incoming claim
     /// requests.
     ///
-    /// When `Some` is returned, it will contain the claim ID which should be
-    /// presented to the user to compare with the claim ID displayed on the
+    /// When `Some` is returned, it will contain the claim PIN which should be
+    /// presented to the user to compare with the claim PIN displayed on the
     /// manager. This is to prevent eavesdropping/claim sniping. It will also
     /// contain a `oneshot::Sender<bool>` which can be used to respond to the
     /// claim request. Sending `true` will accept the claim, and sending `false`
     /// or dropping the sender will reject it. If the machine and the manager
-    /// both accept the claim after verifying matching claim IDs, the claim will
+    /// both accept the claim after verifying matching claim PINs, the claim will
     /// be accepted by both parties. If either one rejects the claim, it will be
     /// aborted by both parties.
-    pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
+    pub async fn await_next_incoming_claim_request(
+        &self,
+    ) -> Option<(ClaimPin, oneshot::Sender<bool>)> {
         self.iroh_protocol.await_next_incoming_claim_request().await
     }
 
