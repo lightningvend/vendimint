@@ -32,6 +32,33 @@ const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
 const SECRET_KEY_FILE: &str = "secret.key";
 
+/// A claim PIN used to verify machine claiming operations.
+/// The PIN is always a 6-digit number (0-999999).
+/// The `Display` implementation zero-pads the PIN to 6 digits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClaimPin(u32);
+
+impl ClaimPin {
+    /// Get the raw u32 value of the PIN.
+    #[must_use]
+    pub const fn as_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ClaimPin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Zero-pad to 6 digits.
+        write!(f, "{:06}", self.0)
+    }
+}
+
+impl From<u32> for ClaimPin {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
 /// A machine's configuration, which determines how funds are received.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub struct MachineConfig {
@@ -189,10 +216,11 @@ impl SharedProtocol {
 }
 
 /// Derive a numeric claim PIN from exported keying material.
-pub fn claim_pin_from_keying_material(connection: &Connection) -> u32 {
+pub fn claim_pin_from_keying_material(connection: &Connection) -> ClaimPin {
     let mut km = [0u8; 32];
     connection
         .export_keying_material(&mut km, CLAIM_EXPORT_LABEL, b"")
         .expect("Only fails if output length is too large, which it isn't");
-    u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000
+    let pin_value = u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000;
+    ClaimPin(pin_value)
 }

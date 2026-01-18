@@ -22,8 +22,8 @@ use tokio::{io::AsyncWriteExt, sync::oneshot};
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY,
-    MachineConfig, SharedProtocol, claim_pin_from_keying_material,
+    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor,
+    MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
@@ -68,7 +68,7 @@ impl ManagerProtocol {
     pub async fn claim_machine(
         &self,
         endpoint_addr: EndpointAddr,
-    ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
+    ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
         let machine_id = endpoint_addr.id;
 
         let conn = self
