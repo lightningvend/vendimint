@@ -157,3 +157,108 @@ impl Drop for ClaimAttempt {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_claim_request_accept() {
+        let (tx, rx) = oneshot::channel();
+        let claim_request = ClaimRequest::new(123456, tx);
+
+        assert_eq!(claim_request.pin(), 123456);
+        assert!(claim_request.accept().is_ok());
+
+        // Verify the response was sent
+        assert_eq!(rx.blocking_recv().unwrap(), true);
+    }
+
+    #[test]
+    fn test_claim_request_reject() {
+        let (tx, rx) = oneshot::channel();
+        let claim_request = ClaimRequest::new(654321, tx);
+
+        assert_eq!(claim_request.pin(), 654321);
+        assert!(claim_request.reject().is_ok());
+
+        // Verify the response was sent
+        assert_eq!(rx.blocking_recv().unwrap(), false);
+    }
+
+    #[test]
+    fn test_claim_request_drop_rejects() {
+        let (tx, rx) = oneshot::channel();
+        let claim_request = ClaimRequest::new(111111, tx);
+
+        // Drop the claim request without responding
+        drop(claim_request);
+
+        // Verify rejection was sent
+        assert_eq!(rx.blocking_recv().unwrap(), false);
+    }
+
+    #[test]
+    fn test_claim_request_already_responded() {
+        let (tx, _rx) = oneshot::channel();
+        let mut claim_request = ClaimRequest::new(222222, tx);
+
+        // Simulate already responded by taking the responder
+        let _ = claim_request.responder.take();
+        assert!(matches!(claim_request.accept(), Err(ClaimError::AlreadyResponded)));
+    }
+
+    #[test]
+    fn test_claim_attempt_accept() {
+        use iroh::EndpointId;
+        use std::str::FromStr;
+
+        let (tx, rx) = oneshot::channel();
+        let machine_id = EndpointId::from_str(
+            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8"
+        ).unwrap();
+        let claim_attempt = ClaimAttempt::new(machine_id, 456789, tx);
+
+        assert_eq!(claim_attempt.machine_id(), &machine_id);
+        assert_eq!(claim_attempt.pin(), 456789);
+        assert!(claim_attempt.accept().is_ok());
+
+        // Verify the response was sent
+        assert_eq!(rx.blocking_recv().unwrap(), true);
+    }
+
+    #[test]
+    fn test_claim_attempt_reject() {
+        use iroh::EndpointId;
+        use std::str::FromStr;
+
+        let (tx, rx) = oneshot::channel();
+        let machine_id = EndpointId::from_str(
+            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8"
+        ).unwrap();
+        let claim_attempt = ClaimAttempt::new(machine_id, 987654, tx);
+
+        assert!(claim_attempt.reject().is_ok());
+
+        // Verify the response was sent
+        assert_eq!(rx.blocking_recv().unwrap(), false);
+    }
+
+    #[test]
+    fn test_claim_attempt_drop_rejects() {
+        use iroh::EndpointId;
+        use std::str::FromStr;
+
+        let (tx, rx) = oneshot::channel();
+        let machine_id = EndpointId::from_str(
+            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8"
+        ).unwrap();
+        let claim_attempt = ClaimAttempt::new(machine_id, 333333, tx);
+
+        // Drop the claim attempt without responding
+        drop(claim_attempt);
+
+        // Verify rejection was sent
+        assert_eq!(rx.blocking_recv().unwrap(), false);
+    }
+}
