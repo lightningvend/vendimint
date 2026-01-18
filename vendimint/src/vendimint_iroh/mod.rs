@@ -67,16 +67,29 @@ mod tests {
         manager_accepts: bool,
     ) -> anyhow::Result<(ClaimPin, MachineProtocol, ManagerProtocol)> {
         let machine_addr = machine_protocol.endpoint_addr();
-        let (pin_mgr, tx_mgr) = manager_protocol.claim_machine(machine_addr).await.unwrap();
-        let (pin_machine, tx_machine) = machine_protocol
+        let claim_attempt = manager_protocol.claim_machine(machine_addr).await.unwrap();
+
+        let claim_request = machine_protocol
             .await_next_incoming_claim_request()
             .await
             .unwrap();
-        tx_machine.send(machine_accepts).unwrap();
-        tx_mgr.send(manager_accepts).unwrap();
-        assert_eq!(pin_mgr, pin_machine);
 
-        Ok((pin_mgr, machine_protocol, manager_protocol))
+        assert_eq!(claim_request.pin(), claim_attempt.pin());
+        let pin = claim_request.pin();
+
+        if machine_accepts {
+            claim_request.accept()?;
+        } else {
+            claim_request.reject()?;
+        }
+
+        if manager_accepts {
+            claim_attempt.accept()?;
+        } else {
+            claim_attempt.reject()?;
+        }
+
+        Ok((pin, machine_protocol, manager_protocol))
     }
 
     /// Helper to wait for a condition with timeout
@@ -379,8 +392,9 @@ mod tests {
         machine_addr: iroh::EndpointAddr,
     ) -> tokio::task::JoinHandle<(ClaimPin, ManagerProtocol)> {
         tokio::spawn(async move {
-            let (pin, tx) = manager_protocol.claim_machine(machine_addr).await.unwrap();
-            tx.send(true).unwrap();
+            let claim_attempt = manager_protocol.claim_machine(machine_addr).await.unwrap();
+            let pin = claim_attempt.pin();
+            claim_attempt.accept().unwrap();
             (pin, manager_protocol)
         })
     }
@@ -488,8 +502,8 @@ mod tests {
 
         // Second manager attempts to claim
         let machine_addr2 = machine_protocol.endpoint_addr();
-        let (_pin_mgr2, tx_mgr2) = manager2_protocol.claim_machine(machine_addr2).await?;
-        tx_mgr2.send(true).unwrap();
+        let claim_attempt = manager2_protocol.claim_machine(machine_addr2).await?;
+        claim_attempt.accept().unwrap();
 
         tokio::time::sleep(IROH_WAIT_DELAY).await;
 
@@ -799,13 +813,12 @@ mod tests {
                 .unwrap()
         });
 
-        let ((pin_mgr, _tx_mgr), (pin_machine, _tx_machine)) =
-            tokio::try_join!(manager_task, machine_task)?;
+        let (claim_attempt, claim_request) = tokio::try_join!(manager_task, machine_task)?;
 
         // Pins should match and be valid 6-digit numbers
-        assert_eq!(pin_mgr, pin_machine);
+        assert_eq!(claim_attempt.pin(), claim_request.pin());
         assert!(
-            pin_mgr.as_u32() < 1_000_000,
+            claim_attempt.pin().as_u32() < 1_000_000,
             "PIN should be less than 1,000,000"
         );
 
@@ -862,11 +875,12 @@ mod tests {
             tokio::sync::mpsc::channel(num_managers);
         let machine_task = tokio::spawn(async move {
             loop {
-                let (pin, tx) = machine_protocol_arc_clone
+                let claim_request = machine_protocol_arc_clone
                     .await_next_incoming_claim_request()
                     .await
                     .unwrap();
-                tx.send(true).unwrap();
+                let pin = claim_request.pin();
+                claim_request.accept().unwrap();
                 machine_pin_sender.send(pin).await.unwrap();
             }
         });

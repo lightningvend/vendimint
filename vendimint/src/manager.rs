@@ -1,14 +1,14 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
+use crate::claim::ClaimAttempt;
 use crate::fedimint_wallet::Wallet;
-use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, ManagerProtocol};
+use crate::vendimint_iroh::{KvEntry, MachineConfig, ManagerProtocol};
 use bitcoin::Network;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
 use iroh::{EndpointAddr, EndpointId};
 use serde::Serialize;
-use tokio::sync::oneshot;
 
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
@@ -93,14 +93,26 @@ impl Manager {
 
     /// Claims a machine by connecting to it via its endpoint address.
     ///
+    /// Returns a `ClaimAttempt` which provides the machine ID, claim PIN,
+    /// and methods to accept/reject the claim. The claim ID should be verified
+    /// against the one displayed on the machine before accepting to prevent claim sniping.
+    pub async fn claim_machine(&self, endpoint_addr: EndpointAddr) -> anyhow::Result<ClaimAttempt> {
+        self.iroh_protocol.claim_machine(endpoint_addr).await
+    }
+
+    /// Claims a machine by connecting to it via its endpoint address (legacy API).
+    ///
     /// Returns a claim PIN and a sender to accept/reject the claim.
     /// The claim PIN should be verified against the one displayed on the machine
     /// before accepting to prevent claim sniping. Once verified, send `true` to
     /// the sender to accept the claim, or `false` to reject it.
-    pub async fn claim_machine(
+    ///
+    /// **Deprecated**: Use [`Self::claim_machine`] which returns a `ClaimAttempt`
+    /// with a more ergonomic API.
+    pub async fn claim_machine_raw(
         &self,
         endpoint_addr: EndpointAddr,
-    ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
+    ) -> anyhow::Result<ClaimAttempt> {
         self.iroh_protocol.claim_machine(endpoint_addr).await
     }
 

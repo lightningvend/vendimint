@@ -27,10 +27,10 @@ use tokio::{
     sync::{Mutex, mpsc, oneshot},
 };
 
-use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
+use crate::{ClaimRequest, vendimint_iroh::shared::PING_MAGIC_BYTES};
 
 use super::shared::{
-    CLAIM_ALPN, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY, MachineConfig,
+    CLAIM_ALPN, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY, MachineConfig,
     SharedProtocol, claim_pin_from_keying_material,
 };
 
@@ -42,7 +42,7 @@ pub struct MachineProtocol {
     blobs: BlobsProtocol,
     docs: Docs,
     app_storage_path: PathBuf,
-    claim_request_receiver: Mutex<mpsc::Receiver<(ClaimPin, oneshot::Sender<bool>)>>,
+    claim_request_receiver: Mutex<mpsc::Receiver<ClaimRequest>>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
 }
 
@@ -60,7 +60,7 @@ pub enum MachineState {
 struct ClaimHandler {
     docs: Docs,
     app_storage_path: PathBuf,
-    claim_request_sender: mpsc::Sender<(ClaimPin, oneshot::Sender<bool>)>,
+    claim_request_sender: mpsc::Sender<ClaimRequest>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
 }
 
@@ -106,7 +106,7 @@ impl ProtocolHandler for ClaimHandler {
             let (tx, rx) = oneshot::channel();
 
             this.claim_request_sender
-                .send((pin, tx))
+                .send(ClaimRequest::new(pin, tx))
                 .await
                 .map_err(AcceptError::from_err)?;
 
@@ -180,7 +180,7 @@ impl MachineProtocol {
 
         let claimed_manager_pubkey = Arc::new(Mutex::new(manager_public_key_or));
 
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = mpsc::channel(16);
 
         let handler = ClaimHandler {
             docs: shared_protocol.docs.clone(),
@@ -230,9 +230,7 @@ impl MachineProtocol {
         self.router.endpoint().addr()
     }
 
-    pub async fn await_next_incoming_claim_request(
-        &self,
-    ) -> Option<(ClaimPin, oneshot::Sender<bool>)> {
+    pub async fn await_next_incoming_claim_request(&self) -> Option<ClaimRequest> {
         self.claim_request_receiver.lock().await.recv().await
     }
 

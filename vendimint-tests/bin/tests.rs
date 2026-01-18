@@ -37,15 +37,13 @@ async fn main() -> anyhow::Result<()> {
             let MachineState::Unclaimed(machine_addr) = machine.get_machine_state().await? else {
                 panic!("Machine should be unclaimed");
             };
-            let (manager_claim_pin, manager_claim_accepter) =
-                manager.claim_machine(machine_addr).await?;
+            let manager_claim_request = manager.claim_machine(machine_addr).await?;
 
-            let (machine_claim_pin, machine_claim_accepter) =
-                machine.await_next_incoming_claim_request().await.unwrap();
+            let machine_claim_request = machine.await_next_incoming_claim_request().await.unwrap();
 
-            assert_eq!(machine_claim_pin, manager_claim_pin);
-            assert!(machine_claim_accepter.send(true).is_ok());
-            assert!(manager_claim_accepter.send(true).is_ok());
+            assert_eq!(machine_claim_request.pin(), manager_claim_request.pin());
+            assert!(machine_claim_request.accept().is_ok());
+            assert!(manager_claim_request.accept().is_ok());
 
             let federation_invite_code: InviteCode = fed.invite_code()?.parse()?;
             let federation_id = federation_invite_code.federation_id();

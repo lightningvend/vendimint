@@ -19,11 +19,11 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::oneshot};
 
-use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
+use crate::{ClaimAttempt, vendimint_iroh::shared::PING_MAGIC_BYTES};
 
 use super::shared::{
-    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor,
-    MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
+    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY,
+    MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
@@ -65,10 +65,7 @@ impl ManagerProtocol {
         self.router.is_shutdown()
     }
 
-    pub async fn claim_machine(
-        &self,
-        endpoint_addr: EndpointAddr,
-    ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
+    pub async fn claim_machine(&self, endpoint_addr: EndpointAddr) -> anyhow::Result<ClaimAttempt> {
         let machine_id = endpoint_addr.id;
 
         let conn = self
@@ -115,7 +112,7 @@ impl ManagerProtocol {
             conn.close(0u32.into(), b"done");
         });
 
-        Ok((pin, tx))
+        Ok(ClaimAttempt::new(machine_id, pin, tx))
     }
 
     async fn get_machine(&self, machine_id: &EndpointId) -> anyhow::Result<DocTicket> {

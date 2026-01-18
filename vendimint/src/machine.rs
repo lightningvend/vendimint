@@ -1,15 +1,15 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
+use crate::claim::ClaimRequest;
 use crate::fedimint_wallet::Wallet;
 pub use crate::vendimint_iroh::MachineState;
-use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, MachineProtocol};
+use crate::vendimint_iroh::{KvEntry, MachineConfig, MachineProtocol};
 use bitcoin::Network;
 use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
 use lightning_invoice::Bolt11Invoice;
-use tokio::sync::oneshot;
 
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
@@ -135,9 +135,38 @@ impl Machine {
     /// both accept the claim after verifying matching claim PINs, the claim will
     /// be accepted by both parties. If either one rejects the claim, it will be
     /// aborted by both parties.
-    pub async fn await_next_incoming_claim_request(
-        &self,
-    ) -> Option<(ClaimPin, oneshot::Sender<bool>)> {
+    ///
+    /// **Deprecated**: Use [`Self::await_claim_request`] for a typed API that
+    /// returns a `ClaimRequest` object with accept/reject methods.
+    pub async fn await_next_incoming_claim_request(&self) -> Option<ClaimRequest> {
+        self.iroh_protocol.await_next_incoming_claim_request().await
+    }
+
+    /// Awaits the next claim request in a type-safe manner.
+    ///
+    /// Returns a `ClaimRequest` object that encapsulates the PIN and provides
+    /// methods to accept or reject the claim.
+    ///
+    /// Always immediately returns `None` after [`Self::shutdown`] has been called.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use vendimint::Machine;
+    /// # use bitcoin::Network;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let storage_path = std::path::Path::new("/tmp/machine");
+    /// let machine = Machine::new(storage_path, Network::Regtest).await?;
+    ///
+    /// while let Some(claim_request) = machine.await_claim_request().await {
+    ///     println!("Claim request with PIN: {}", claim_request.pin());
+    ///     // Verify PIN with user, then accept or reject
+    ///     claim_request.accept()?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn await_claim_request(&self) -> Option<ClaimRequest> {
         self.iroh_protocol.await_next_incoming_claim_request().await
     }
 
