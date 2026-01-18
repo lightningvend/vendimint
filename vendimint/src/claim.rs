@@ -205,7 +205,10 @@ mod tests {
 
         // Simulate already responded by taking the responder
         let _ = claim_request.responder.take();
-        assert!(matches!(claim_request.accept(), Err(ClaimError::AlreadyResponded)));
+        assert!(matches!(
+            claim_request.accept(),
+            Err(ClaimError::AlreadyResponded)
+        ));
     }
 
     #[test]
@@ -215,8 +218,9 @@ mod tests {
 
         let (tx, rx) = oneshot::channel();
         let machine_id = EndpointId::from_str(
-            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8"
-        ).unwrap();
+            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8",
+        )
+        .unwrap();
         let claim_attempt = ClaimAttempt::new(machine_id, 456789, tx);
 
         assert_eq!(claim_attempt.machine_id(), &machine_id);
@@ -234,8 +238,9 @@ mod tests {
 
         let (tx, rx) = oneshot::channel();
         let machine_id = EndpointId::from_str(
-            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8"
-        ).unwrap();
+            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8",
+        )
+        .unwrap();
         let claim_attempt = ClaimAttempt::new(machine_id, 987654, tx);
 
         assert!(claim_attempt.reject().is_ok());
@@ -251,8 +256,9 @@ mod tests {
 
         let (tx, rx) = oneshot::channel();
         let machine_id = EndpointId::from_str(
-            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8"
-        ).unwrap();
+            "59e8126e80e14c4a7b6e72bbeb99de141e0609a4e61ec8c34b89bc9f87b92dc8",
+        )
+        .unwrap();
         let claim_attempt = ClaimAttempt::new(machine_id, 333333, tx);
 
         // Drop the claim attempt without responding
