@@ -32,33 +32,6 @@ const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
 const SECRET_KEY_FILE: &str = "secret.key";
 
-/// A claim PIN used to verify machine claiming operations.
-/// The PIN is always a 6-digit number (0-999999).
-/// The `Display` implementation zero-pads the PIN to 6 digits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClaimPin(u32);
-
-impl ClaimPin {
-    /// Get the raw u32 value of the PIN.
-    #[must_use]
-    pub const fn as_u32(&self) -> u32 {
-        self.0
-    }
-}
-
-impl std::fmt::Display for ClaimPin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Zero-pad to 6 digits.
-        write!(f, "{:06}", self.0)
-    }
-}
-
-impl From<u32> for ClaimPin {
-    fn from(value: u32) -> Self {
-        Self(value)
-    }
-}
-
 /// A machine's configuration, which determines how funds are received.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub struct MachineConfig {
@@ -215,12 +188,56 @@ impl SharedProtocol {
     }
 }
 
+/// A claim PIN used to verify machine claiming operations.
+/// The PIN is always a 6-digit number (0-999999).
+/// The `Display` implementation zero-pads the PIN to 6 digits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClaimPin(u32);
+
+impl ClaimPin {
+    /// Get the raw u32 value of the PIN.
+    #[must_use]
+    pub const fn as_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ClaimPin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Zero-pad to 6 digits.
+        write!(f, "{:06}", self.0)
+    }
+}
+
 /// Derive a numeric claim PIN from exported keying material.
 pub fn claim_pin_from_keying_material(connection: &Connection) -> ClaimPin {
     let mut km = [0u8; 32];
     connection
         .export_keying_material(&mut km, CLAIM_EXPORT_LABEL, b"")
         .expect("Only fails if output length is too large, which it isn't");
-    let pin_value = u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000;
-    ClaimPin(pin_value)
+
+    // Note: It's important that we modulo the PIN to ensure it's within the valid range.
+    ClaimPin(u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_claim_pin_display_zero_pads_to_six_digits() {
+        let pin_zero = ClaimPin(0);
+        let pin_small = ClaimPin(7);
+        let pin_exact = ClaimPin(999_999);
+
+        assert_eq!(pin_zero.to_string(), "000000");
+        assert_eq!(pin_small.to_string(), "000007");
+        assert_eq!(pin_exact.to_string(), "999999");
+    }
+
+    #[test]
+    fn test_claim_pin_equality() {
+        assert_eq!(ClaimPin(123_456), ClaimPin(123_456));
+        assert_ne!(ClaimPin(123_456), ClaimPin(654_321));
+    }
 }
