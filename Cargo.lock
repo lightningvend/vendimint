@@ -5295,7 +5295,7 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-relay 0.95.1",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "n0-watcher 0.5.0",
  "netdev 0.38.2",
  "netwatch 0.12.0",
@@ -5402,7 +5402,7 @@ dependencies = [
  "iroh-tickets",
  "irpc",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "n0-snafu",
  "nested_enum_utils",
  "postcard",
@@ -5443,7 +5443,7 @@ dependencies = [
  "iroh-tickets",
  "irpc",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "num_enum",
  "postcard",
  "rand 0.9.2",
@@ -5481,7 +5481,7 @@ dependencies = [
  "iroh-metrics 0.37.0",
  "irpc",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "postcard",
  "rand 0.9.2",
  "serde",
@@ -5762,7 +5762,7 @@ dependencies = [
  "iroh-quinn-proto",
  "lru 0.16.2",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "num_enum",
  "pin-project",
  "pkarr 5.0.0",
@@ -5811,7 +5811,7 @@ dependencies = [
  "iroh-quinn 0.14.0",
  "irpc-derive",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "postcard",
  "rcgen 0.14.5",
  "rustls",
@@ -6577,12 +6577,12 @@ dependencies = [
 
 [[package]]
 name = "n0-future"
-version = "0.3.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "439e746b307c1fd0c08771c3cafcd1746c3ccdb0d9c7b859d3caded366b6da76"
+checksum = "e2ab99dfb861450e68853d34ae665243a88b8c493d01ba957321a1e9b2312bbe"
 dependencies = [
  "cfg_aliases",
- "derive_more 1.0.0",
+ "derive_more 2.1.0",
  "futures-buffered",
  "futures-lite",
  "futures-util",
@@ -6628,7 +6628,7 @@ checksum = "38acf13c1ddafc60eb7316d52213467f8ccb70b6f02b65e7d97f7799b1f50be4"
 dependencies = [
  "derive_more 2.1.0",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
 ]
 
 [[package]]
@@ -6882,7 +6882,7 @@ dependencies = [
  "js-sys",
  "libc",
  "n0-error",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "n0-watcher 0.5.0",
  "netdev 0.38.2",
  "netlink-packet-core 0.8.1",
@@ -11525,7 +11525,7 @@ dependencies = [
  "iroh-docs",
  "iroh-gossip",
  "lightning-invoice",
- "n0-future 0.3.0",
+ "n0-future 0.3.2",
  "quic-rpc",
  "rand 0.8.5",
  "serde",
