@@ -1,17 +1,15 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
+use crate::claim::ClaimRequest;
 use crate::fedimint_wallet::Wallet;
-use crate::vendimint_iroh::KvEntry;
-use crate::vendimint_iroh::MachineConfig;
-use crate::vendimint_iroh::MachineProtocol;
 pub use crate::vendimint_iroh::MachineState;
+use crate::vendimint_iroh::{KvEntry, MachineConfig, MachineProtocol};
 use bitcoin::Network;
 use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
 use lightning_invoice::Bolt11Invoice;
-use tokio::sync::oneshot;
 
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
@@ -128,16 +126,47 @@ impl Machine {
     /// ideally in a loop, to ensure quick alerting of any incoming claim
     /// requests.
     ///
-    /// When `Some` is returned, it will contain the claim ID which should be
-    /// presented to the user to compare with the claim ID displayed on the
+    /// When `Some` is returned, it will contain the claim PIN which should be
+    /// presented to the user to compare with the claim PIN displayed on the
     /// manager. This is to prevent eavesdropping/claim sniping. It will also
     /// contain a `oneshot::Sender<bool>` which can be used to respond to the
     /// claim request. Sending `true` will accept the claim, and sending `false`
     /// or dropping the sender will reject it. If the machine and the manager
-    /// both accept the claim after verifying matching claim IDs, the claim will
+    /// both accept the claim after verifying matching claim PINs, the claim will
     /// be accepted by both parties. If either one rejects the claim, it will be
     /// aborted by both parties.
-    pub async fn await_next_incoming_claim_request(&self) -> Option<(u32, oneshot::Sender<bool>)> {
+    ///
+    /// **Deprecated**: Use [`Self::await_claim_request`] for a typed API that
+    /// returns a `ClaimRequest` object with accept/reject methods.
+    pub async fn await_next_incoming_claim_request(&self) -> Option<ClaimRequest> {
+        self.iroh_protocol.await_next_incoming_claim_request().await
+    }
+
+    /// Awaits the next claim request in a type-safe manner.
+    ///
+    /// Returns a `ClaimRequest` object that encapsulates the PIN and provides
+    /// methods to accept or reject the claim.
+    ///
+    /// Always immediately returns `None` after [`Self::shutdown`] has been called.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use vendimint::Machine;
+    /// # use bitcoin::Network;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let storage_path = std::path::Path::new("/tmp/machine");
+    /// let machine = Machine::new(storage_path, Network::Regtest).await?;
+    ///
+    /// while let Some(claim_request) = machine.await_claim_request().await {
+    ///     println!("Claim request with PIN: {}", claim_request.pin());
+    ///     // Verify PIN with user, then accept or reject
+    ///     claim_request.accept()?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn await_claim_request(&self) -> Option<ClaimRequest> {
         self.iroh_protocol.await_next_incoming_claim_request().await
     }
 

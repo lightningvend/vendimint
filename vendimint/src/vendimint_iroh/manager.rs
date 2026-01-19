@@ -19,7 +19,7 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::oneshot};
 
-use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
+use crate::{ClaimAttempt, vendimint_iroh::shared::PING_MAGIC_BYTES};
 
 use super::shared::{
     CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY,
@@ -65,10 +65,7 @@ impl ManagerProtocol {
         self.router.is_shutdown()
     }
 
-    pub async fn claim_machine(
-        &self,
-        endpoint_addr: EndpointAddr,
-    ) -> anyhow::Result<(u32, oneshot::Sender<bool>)> {
+    pub async fn claim_machine(&self, endpoint_addr: EndpointAddr) -> anyhow::Result<ClaimAttempt> {
         let machine_id = endpoint_addr.id;
 
         let conn = self
@@ -115,7 +112,7 @@ impl ManagerProtocol {
             conn.close(0u32.into(), b"done");
         });
 
-        Ok((pin, tx))
+        Ok(ClaimAttempt::new(machine_id, pin, tx))
     }
 
     async fn get_machine(&self, machine_id: &EndpointId) -> anyhow::Result<DocTicket> {
