@@ -12,6 +12,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
+// EndpointAddr is only needed for the test-only endpoint_addr() method below.
 #[cfg(test)]
 use iroh::EndpointAddr;
 use iroh_blobs::BlobsProtocol;

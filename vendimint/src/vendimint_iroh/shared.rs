@@ -285,6 +285,8 @@ impl From<ClaimKey> for EndpointAddr {
 impl std::fmt::Display for ClaimKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Serialize to JSON for a stable, human-readable representation.
+        // Note: We map serde errors to fmt::Error because Display trait
+        // doesn't allow returning detailed error information.
         let json = serde_json::to_string(&self.0)
             .map_err(|_| std::fmt::Error)?;
         write!(f, "{}", json)
