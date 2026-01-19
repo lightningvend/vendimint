@@ -346,7 +346,7 @@ mod tests {
 
         let endpoint_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
         let addr = EndpointAddr::new(endpoint_id);
-        
+
         let claim_key: ClaimKey = addr.clone().into();
         assert_eq!(claim_key.as_inner(), &addr);
     }
@@ -358,7 +358,7 @@ mod tests {
         let endpoint_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
         let addr = EndpointAddr::new(endpoint_id);
         let claim_key = ClaimKey::new(addr.clone());
-        
+
         let addr_back: EndpointAddr = claim_key.into();
         assert_eq!(addr, addr_back);
     }
