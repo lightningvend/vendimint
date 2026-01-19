@@ -8,10 +8,12 @@ use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
 use iroh::{
-    EndpointAddr, PublicKey,
+    PublicKey,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
+#[cfg(test)]
+use iroh::EndpointAddr;
 use iroh_blobs::BlobsProtocol;
 use iroh_docs::protocol::Docs;
 use iroh_docs::{

@@ -327,7 +327,7 @@ mod tests {
         use iroh::EndpointId;
 
         // Create a test EndpointAddr
-        let endpoint_id = EndpointId::from_bytes(&[0u8; 32]);
+        let endpoint_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
         let addr = EndpointAddr::new(endpoint_id);
         let claim_key = ClaimKey::new(addr.clone());
 
@@ -344,7 +344,7 @@ mod tests {
     fn test_claim_key_from_endpoint_addr() {
         use iroh::EndpointId;
 
-        let endpoint_id = EndpointId::from_bytes(&[1u8; 32]);
+        let endpoint_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
         let addr = EndpointAddr::new(endpoint_id);
         
         let claim_key: ClaimKey = addr.clone().into();
@@ -355,7 +355,7 @@ mod tests {
     fn test_claim_key_into_endpoint_addr() {
         use iroh::EndpointId;
 
-        let endpoint_id = EndpointId::from_bytes(&[2u8; 32]);
+        let endpoint_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
         let addr = EndpointAddr::new(endpoint_id);
         let claim_key = ClaimKey::new(addr.clone());
         
