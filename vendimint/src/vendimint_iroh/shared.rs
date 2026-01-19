@@ -6,7 +6,7 @@ use fedimint_core::{
 use fedimint_lnv2_common::ContractId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use iroh::{
-    Endpoint, SecretKey,
+    EndpointAddr, Endpoint, SecretKey,
     endpoint::Connection,
     protocol::{Router, RouterBuilder},
 };
@@ -220,6 +220,86 @@ pub fn claim_pin_from_keying_material(connection: &Connection) -> ClaimPin {
     ClaimPin(u32::from_be_bytes(km[..4].try_into().unwrap()) % 1_000_000)
 }
 
+/// A newtype wrapper around [`EndpointAddr`] for machine claiming.
+///
+/// This type provides a user-friendly string representation of machine addresses
+/// using JSON encoding, making it easy to copy/paste claim keys between systems.
+///
+/// # Encoding
+///
+/// The `Display` implementation serializes the inner `EndpointAddr` to JSON.
+/// The `FromStr` implementation deserializes from JSON. This encoding was chosen
+/// because:
+/// - It's stable and human-readable
+/// - It's compatible with the existing serde ecosystem
+/// - `EndpointAddr` already implements `Serialize`/`Deserialize`
+/// - No additional dependencies are required
+///
+/// # Examples
+///
+/// ```
+/// # use vendimint::vendimint_iroh::shared::ClaimKey;
+/// # use std::str::FromStr;
+/// // Convert a ClaimKey to a string for sharing
+/// let claim_key = /* ... */;
+/// let claim_key_str = claim_key.to_string();
+///
+/// // Parse a ClaimKey from a string
+/// let parsed_key = ClaimKey::from_str(&claim_key_str).unwrap();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimKey(EndpointAddr);
+
+impl ClaimKey {
+    /// Create a new `ClaimKey` from an `EndpointAddr`.
+    #[must_use]
+    pub const fn new(addr: EndpointAddr) -> Self {
+        Self(addr)
+    }
+
+    /// Get the inner `EndpointAddr`.
+    #[must_use]
+    pub fn into_inner(self) -> EndpointAddr {
+        self.0
+    }
+
+    /// Get a reference to the inner `EndpointAddr`.
+    #[must_use]
+    pub const fn as_inner(&self) -> &EndpointAddr {
+        &self.0
+    }
+}
+
+impl From<EndpointAddr> for ClaimKey {
+    fn from(addr: EndpointAddr) -> Self {
+        Self(addr)
+    }
+}
+
+impl From<ClaimKey> for EndpointAddr {
+    fn from(key: ClaimKey) -> Self {
+        key.0
+    }
+}
+
+impl std::fmt::Display for ClaimKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Serialize to JSON for a stable, human-readable representation.
+        let json = serde_json::to_string(&self.0)
+            .map_err(|_| std::fmt::Error)?;
+        write!(f, "{}", json)
+    }
+}
+
+impl std::str::FromStr for ClaimKey {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr = serde_json::from_str(s)?;
+        Ok(Self(addr))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +319,47 @@ mod tests {
     fn test_claim_pin_equality() {
         assert_eq!(ClaimPin(123_456), ClaimPin(123_456));
         assert_ne!(ClaimPin(123_456), ClaimPin(654_321));
+    }
+
+    #[test]
+    fn test_claim_key_display_and_from_str_roundtrip() {
+        use std::str::FromStr;
+        use iroh::EndpointId;
+
+        // Create a test EndpointAddr
+        let endpoint_id = EndpointId::from_bytes(&[0u8; 32]);
+        let addr = EndpointAddr::new(endpoint_id);
+        let claim_key = ClaimKey::new(addr.clone());
+
+        // Convert to string and back
+        let claim_key_str = claim_key.to_string();
+        let parsed_key = ClaimKey::from_str(&claim_key_str).unwrap();
+
+        // Should be equal
+        assert_eq!(claim_key, parsed_key);
+        assert_eq!(claim_key.as_inner(), parsed_key.as_inner());
+    }
+
+    #[test]
+    fn test_claim_key_from_endpoint_addr() {
+        use iroh::EndpointId;
+
+        let endpoint_id = EndpointId::from_bytes(&[1u8; 32]);
+        let addr = EndpointAddr::new(endpoint_id);
+        
+        let claim_key: ClaimKey = addr.clone().into();
+        assert_eq!(claim_key.as_inner(), &addr);
+    }
+
+    #[test]
+    fn test_claim_key_into_endpoint_addr() {
+        use iroh::EndpointId;
+
+        let endpoint_id = EndpointId::from_bytes(&[2u8; 32]);
+        let addr = EndpointAddr::new(endpoint_id);
+        let claim_key = ClaimKey::new(addr.clone());
+        
+        let addr_back: EndpointAddr = claim_key.into();
+        assert_eq!(addr, addr_back);
     }
 }

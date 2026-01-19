@@ -4,7 +4,7 @@ mod shared;
 
 pub use machine::{MachineProtocol, MachineState};
 pub use manager::ManagerProtocol;
-pub use shared::{ClaimPin, KvEntry, KvEntryAuthor, MachineConfig};
+pub use shared::{ClaimKey, ClaimPin, KvEntry, KvEntryAuthor, MachineConfig};
 
 #[cfg(test)]
 mod tests {

@@ -30,8 +30,8 @@ use tokio::{
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY, MachineConfig,
-    SharedProtocol, claim_pin_from_keying_material,
+    CLAIM_ALPN, ClaimKey, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY,
+    MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
@@ -53,7 +53,8 @@ pub enum MachineState {
     /// by the manager, or `None` if unconfigured.
     Claimed(Option<MachineConfig>),
     /// The machine is unclaimed.
-    Unclaimed(EndpointAddr),
+    /// Contains the claim key that can be used by a manager to claim this machine.
+    Unclaimed(ClaimKey),
 }
 
 #[derive(Clone, Debug)]
@@ -220,7 +221,9 @@ impl MachineProtocol {
         if claimed_manager_pubkey.is_some() {
             Ok(MachineState::Claimed(self.get_machine_config().await?))
         } else {
-            Ok(MachineState::Unclaimed(self.router.endpoint().addr()))
+            Ok(MachineState::Unclaimed(ClaimKey::new(
+                self.router.endpoint().addr(),
+            )))
         }
     }
 
