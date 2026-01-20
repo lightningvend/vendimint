@@ -20,7 +20,7 @@ significant_drop_tightening = "allow"
 [workspace.dependencies]
 anyhow = "1.0.99"
 bincode = { version = "2.0.1", features = ["serde"] }
-bip39 = "2.2.0"
+bip39 = "2.2.2"
 bitcoin = "0.32.8"
 devimint = "0.9.0"
 fedimintd = "0.9.0"
