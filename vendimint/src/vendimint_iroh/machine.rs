@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::{Context, anyhow};
 use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
@@ -37,6 +38,9 @@ use super::shared::{
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
 const MACHINE_MANAGER_PUBLIC_KEY_PATH: &str = "machine_manager_public_key.json";
 
+#[derive(Debug, Default)]
+struct MachineDocInitMutex(Mutex<()>);
+
 pub struct MachineProtocol {
     router: Router,
     blobs: BlobsProtocol,
@@ -44,6 +48,7 @@ pub struct MachineProtocol {
     app_storage_path: PathBuf,
     claim_request_receiver: Mutex<mpsc::Receiver<(u32, oneshot::Sender<bool>)>>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
+    machine_doc_init_lock: Arc<MachineDocInitMutex>,
 }
 
 /// The state of a machine with respect to its manager.
@@ -62,6 +67,7 @@ struct ClaimHandler {
     app_storage_path: PathBuf,
     claim_request_sender: mpsc::Sender<(u32, oneshot::Sender<bool>)>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
+    machine_doc_init_lock: Arc<MachineDocInitMutex>,
 }
 
 // TODO: Find a way to remove the need for this function.
@@ -129,9 +135,13 @@ impl ProtocolHandler for ClaimHandler {
                     )));
                 }
 
-                let doc = get_or_create_machine_doc(&this.app_storage_path, &this.docs)
-                    .await
-                    .map_err(accept_err)?;
+                let doc = get_or_create_machine_doc(
+                    &this.app_storage_path,
+                    &this.docs,
+                    this.machine_doc_init_lock.as_ref(),
+                )
+                .await
+                .map_err(accept_err)?;
                 let ticket = doc
                     .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
                     .await
@@ -179,6 +189,7 @@ impl MachineProtocol {
             };
 
         let claimed_manager_pubkey = Arc::new(Mutex::new(manager_public_key_or));
+        let machine_doc_init_lock = Arc::new(MachineDocInitMutex::default());
 
         let (tx, rx) = mpsc::channel(1);
 
@@ -187,6 +198,7 @@ impl MachineProtocol {
             app_storage_path: shared_protocol.app_storage_path.clone(),
             claim_request_sender: tx,
             claimed_manager_pubkey: claimed_manager_pubkey.clone(),
+            machine_doc_init_lock: machine_doc_init_lock.clone(),
         };
 
         shared_protocol.router_builder = shared_protocol.router_builder.accept(CLAIM_ALPN, handler);
@@ -198,6 +210,7 @@ impl MachineProtocol {
             app_storage_path: shared_protocol.app_storage_path,
             claim_request_receiver: Mutex::new(rx),
             claimed_manager_pubkey,
+            machine_doc_init_lock,
         })
     }
 
@@ -277,7 +290,12 @@ impl MachineProtocol {
     /// Creates an iroh doc (or returns the existing one) for use in storing/transferring data
     /// related to payments received to the current device. Should only be called on a machine.
     async fn get_or_create_machine_doc(&self) -> anyhow::Result<Doc> {
-        get_or_create_machine_doc(&self.app_storage_path, &self.docs).await
+        get_or_create_machine_doc(
+            &self.app_storage_path,
+            &self.docs,
+            self.machine_doc_init_lock.as_ref(),
+        )
+        .await
     }
 
     pub async fn get_kv_value(&self, key: impl AsRef<[u8]>) -> anyhow::Result<Option<KvEntry>> {
@@ -353,22 +371,30 @@ impl MachineProtocol {
     }
 }
 
-// TODO: Perform this with a lock to prevent race conditions.
-async fn get_or_create_machine_doc(app_storage_path: &Path, docs: &Docs) -> anyhow::Result<Doc> {
+async fn get_or_create_machine_doc(
+    app_storage_path: &Path,
+    docs: &Docs,
+    machine_doc_init_lock: &MachineDocInitMutex,
+) -> anyhow::Result<Doc> {
+    let _machine_doc_init_guard = machine_doc_init_lock.0.lock().await;
+
     tokio::fs::create_dir_all(app_storage_path).await?;
 
     let doc_ticket_path = app_storage_path.join(MACHINE_DOC_TICKET_PATH);
 
     let doc_ticket_or: Option<DocTicket> = match tokio::fs::read_to_string(&doc_ticket_path).await {
-        Ok(doc_ticket_str) => serde_json::from_str(&doc_ticket_str).ok(),
-        Err(_) => None,
+        Ok(doc_ticket_str) => Some(
+            serde_json::from_str(&doc_ticket_str)
+                .context("Failed to parse machine doc ticket file as JSON")?,
+        ),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err.into()),
     };
 
     if let Some(doc_ticket) = doc_ticket_or {
-        return docs
-            .open(doc_ticket.capability.id())
-            .await
-            .map(|doc_or| doc_or.unwrap());
+        return docs.open(doc_ticket.capability.id()).await?.ok_or_else(|| {
+            anyhow!("Machine doc ticket points to a document that could not be opened")
+        });
     }
 
     let new_doc = docs.create().await?;
@@ -376,7 +402,9 @@ async fn get_or_create_machine_doc(app_storage_path: &Path, docs: &Docs) -> anyh
     // Save the doc ticket to a file for later use.
     let new_doc_ticket = new_doc.share(ShareMode::Write, AddrInfoOptions::Id).await?;
     let new_doc_ticket_str = serde_json::to_string(&new_doc_ticket)?;
-    tokio::fs::write(&doc_ticket_path, new_doc_ticket_str).await?;
+    let doc_ticket_tmp_path = app_storage_path.join(format!("{MACHINE_DOC_TICKET_PATH}.tmp"));
+    tokio::fs::write(&doc_ticket_tmp_path, new_doc_ticket_str).await?;
+    tokio::fs::rename(&doc_ticket_tmp_path, &doc_ticket_path).await?;
 
     Ok(new_doc)
 }
@@ -384,6 +412,16 @@ async fn get_or_create_machine_doc(app_storage_path: &Path, docs: &Docs) -> anyh
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    async fn get_doc_id(doc: &Doc) -> anyhow::Result<String> {
+        Ok(doc
+            .share(ShareMode::Write, AddrInfoOptions::Id)
+            .await?
+            .capability
+            .id()
+            .to_string())
+    }
 
     #[tokio::test]
     async fn test_machine_protocol() -> anyhow::Result<()> {
@@ -400,6 +438,77 @@ mod tests {
 
         assert_eq!(machine_protocol.endpoint_addr().id, endpoint_addr.id);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_machine_doc_initialization_is_serialized() -> anyhow::Result<()> {
+        let storage_path = tempfile::tempdir()?;
+        let machine_protocol = Arc::new(MachineProtocol::new(storage_path.path()).await?);
+        let machine_doc_ticket_path = machine_protocol
+            .app_storage_path
+            .join(MACHINE_DOC_TICKET_PATH);
+
+        let mut tasks = Vec::new();
+        for _ in 0..32 {
+            let machine_protocol = machine_protocol.clone();
+            tasks.push(tokio::spawn(async move {
+                let doc = machine_protocol.get_or_create_machine_doc().await?;
+                get_doc_id(&doc).await
+            }));
+        }
+
+        let mut doc_ids = Vec::new();
+        for task in tasks {
+            doc_ids.push(task.await??);
+        }
+
+        assert!(!doc_ids.is_empty());
+        let first_doc_id = doc_ids[0].clone();
+        assert!(doc_ids.iter().all(|doc_id| doc_id == &first_doc_id));
+
+        let machine_doc_ticket_str = tokio::fs::read_to_string(machine_doc_ticket_path).await?;
+        let machine_doc_ticket: DocTicket = serde_json::from_str(&machine_doc_ticket_str)?;
+        assert_eq!(machine_doc_ticket.capability.id().to_string(), first_doc_id);
+
+        machine_protocol.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_machine_doc_id_persists_across_restart() -> anyhow::Result<()> {
+        let storage_path = tempfile::tempdir()?;
+
+        let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
+        let machine_doc_ticket_path = machine_protocol
+            .app_storage_path
+            .join(MACHINE_DOC_TICKET_PATH);
+        let initial_doc = machine_protocol.get_or_create_machine_doc().await?;
+        let initial_doc_id = get_doc_id(&initial_doc).await?;
+
+        let machine_doc_ticket_str = tokio::fs::read_to_string(&machine_doc_ticket_path).await?;
+        let machine_doc_ticket: DocTicket = serde_json::from_str(&machine_doc_ticket_str)?;
+        assert_eq!(
+            machine_doc_ticket.capability.id().to_string(),
+            initial_doc_id
+        );
+
+        machine_protocol.shutdown().await?;
+        drop(machine_protocol);
+
+        let machine_protocol = MachineProtocol::new(storage_path.path()).await?;
+        let restarted_doc = machine_protocol.get_or_create_machine_doc().await?;
+        let restarted_doc_id = get_doc_id(&restarted_doc).await?;
+        assert_eq!(restarted_doc_id, initial_doc_id);
+
+        let machine_doc_ticket_str = tokio::fs::read_to_string(&machine_doc_ticket_path).await?;
+        let machine_doc_ticket: DocTicket = serde_json::from_str(&machine_doc_ticket_str)?;
+        assert_eq!(
+            machine_doc_ticket.capability.id().to_string(),
+            restarted_doc_id
+        );
+
+        machine_protocol.shutdown().await?;
         Ok(())
     }
 }
