@@ -8,6 +8,7 @@ use fedimint_lnv2_remote_client::ClaimableContract;
 use iroh::{
     Endpoint, SecretKey,
     endpoint::Connection,
+    endpoint::presets,
     protocol::{Router, RouterBuilder},
 };
 use iroh_blobs::{ALPN as BLOBS_ALPN, BlobsProtocol, store::fs::FsStore};
@@ -116,7 +117,10 @@ impl SharedProtocol {
             SecretKey::from_bytes(&key_bytes)
         };
 
-        let endpoint = Endpoint::builder().secret_key(secret_key).bind().await?;
+        let endpoint = Endpoint::builder(presets::N0)
+            .secret_key(secret_key)
+            .bind()
+            .await?;
 
         let builder = Router::builder(endpoint);
 

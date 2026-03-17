@@ -15,9 +15,8 @@ use bitcoin::{
     secp256k1::{PublicKey, Secp256k1},
 };
 use fedimint_bip39::Bip39RootSecretStrategy;
-use fedimint_client::{
-    Client, ClientHandle, ModuleKind, OperationId, RootSecret, secret::RootSecretStrategy,
-};
+use fedimint_client::{Client, ClientHandle, OperationId, RootSecret, secret::RootSecretStrategy};
+use fedimint_connectors::ConnectorRegistry;
 use fedimint_core::{
     Amount, config::FederationId, db::Database, invite_code::InviteCode, util::SafeUrl,
 };
@@ -257,7 +256,8 @@ impl Wallet {
             }
 
             let db: Database =
-                RocksDb::open(fedimint_clients_data_dir.join(federation_id.to_string()))
+                RocksDb::build(fedimint_clients_data_dir.join(federation_id.to_string()))
+                    .open()
                     .await?
                     .into();
 
@@ -282,7 +282,7 @@ impl Wallet {
 
         // Short-circuit if we're already connected to this federation.
         if !federation_data_dir.is_dir() {
-            let db: Database = RocksDb::open(&federation_data_dir).await?.into();
+            let db: Database = RocksDb::build(&federation_data_dir).open().await?.into();
 
             let client = self
                 .build_client_from_invite_code(invite_code.clone(), db)
@@ -328,7 +328,7 @@ impl Wallet {
         let mut clients = self.clients.write().await;
 
         if let Some(client) = clients.remove(&federation_id) {
-            if client.get_balance().await.unwrap().msats != 0 {
+            if client.get_balance_for_btc().await.unwrap().msats != 0 {
                 // Re-insert the client back into the clients map.
                 clients.insert(federation_id, client);
 
@@ -375,7 +375,7 @@ impl Wallet {
                         .global
                         .federation_name()
                         .map(ToString::to_string),
-                    balance: client.get_balance().await.unwrap(),
+                    balance: client.get_balance_for_btc().await.unwrap(),
                 },
             );
         }
@@ -432,7 +432,7 @@ impl Wallet {
         let clients = self.clients.read().await;
 
         for client in clients.values() {
-            balance += client.get_balance().await.unwrap();
+            balance += client.get_balance_for_btc().await.unwrap();
         }
         balance
     }
@@ -554,15 +554,15 @@ impl Wallet {
         client_builder.with_module(MintClientInit);
         client_builder.with_module(LightningRemoteClientInit::default());
 
-        client_builder.with_primary_module_kind(ModuleKind::from_static_str("mint"));
+        let connectors = Self::build_client_connectors().await?;
 
         let root_secret = self.root_secret.clone();
 
         let client = if is_initialized {
-            client_builder.open(db, root_secret).await?
+            client_builder.open(connectors, db, root_secret).await?
         } else {
             client_builder
-                .preview(&invite_code)
+                .preview(connectors, &invite_code)
                 .await?
                 .join(db, root_secret)
                 .await?
@@ -584,12 +584,12 @@ impl Wallet {
         client_builder.with_module(MintClientInit);
         client_builder.with_module(LightningRemoteClientInit::default());
 
-        client_builder.with_primary_module_kind(ModuleKind::from_static_str("mint"));
+        let connectors = Self::build_client_connectors().await?;
 
         let root_secret = self.root_secret.clone();
 
         let client = if is_initialized {
-            client_builder.open(db, root_secret).await?
+            client_builder.open(connectors, db, root_secret).await?
         } else {
             return Err(anyhow::anyhow!(
                 "Federation with ID {federation_id} is not initialized."
@@ -597,6 +597,10 @@ impl Wallet {
         };
 
         Ok(client)
+    }
+
+    async fn build_client_connectors() -> anyhow::Result<ConnectorRegistry> {
+        ConnectorRegistry::build_from_client_env()?.bind().await
     }
 }
 
