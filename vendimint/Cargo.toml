@@ -20,6 +20,7 @@ bitcoin = { workspace = true }
 fedimint-api-client = { workspace = true }
 fedimint-bip39 = { workspace = true }
 fedimint-client = { workspace = true }
+fedimint-connectors = { workspace = true }
 fedimint-core = { workspace = true }
 fedimint-derive-secret = { workspace = true }
 fedimint-lnv2-common = { workspace = true }
