@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use crate::fedimint_wallet::Wallet;
-use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, ManagerProtocol};
+use crate::vendimint_iroh::{ClaimKey, ClaimPin, KvEntry, MachineConfig, ManagerProtocol};
 use bitcoin::Network;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
@@ -102,6 +102,70 @@ impl Manager {
         endpoint_addr: EndpointAddr,
     ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
         self.iroh_protocol.claim_machine(endpoint_addr).await
+    }
+
+    /// Claims a machine using a `ClaimKey`.
+    ///
+    /// This is a convenience wrapper around [`Self::claim_machine`] that
+    /// accepts a `ClaimKey` instead of an `EndpointAddr`.
+    ///
+    /// Returns a claim PIN and a sender to accept/reject the claim.
+    /// The claim PIN should be verified against the one displayed on the machine
+    /// before accepting to prevent claim sniping. Once verified, send `true` to
+    /// the sender to accept the claim, or `false` to reject it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use vendimint::{Manager, ClaimKey};
+    /// # use bitcoin::Network;
+    /// # use std::str::FromStr;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let manager = Manager::new(std::path::Path::new("/tmp"), Network::Regtest).await?;
+    /// let claim_key = ClaimKey::from_str("{...}")?;
+    /// let (pin, tx) = manager.claim_machine_key(claim_key).await?;
+    /// println!("Verify PIN: {}", pin);
+    /// tx.send(true).unwrap(); // Accept the claim
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn claim_machine_key(
+        &self,
+        claim_key: ClaimKey,
+    ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
+        self.claim_machine(claim_key.into_inner()).await
+    }
+
+    /// Claims a machine by parsing a claim key string.
+    ///
+    /// This is a convenience wrapper around [`Self::claim_machine_key`] that
+    /// parses the claim key from a string first.
+    ///
+    /// Returns a claim PIN and a sender to accept/reject the claim.
+    /// The claim PIN should be verified against the one displayed on the machine
+    /// before accepting to prevent claim sniping. Once verified, send `true` to
+    /// the sender to accept the claim, or `false` to reject it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use vendimint::Manager;
+    /// # use bitcoin::Network;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let manager = Manager::new(std::path::Path::new("/tmp"), Network::Regtest).await?;
+    /// let claim_key_str = "{...}";
+    /// let (pin, tx) = manager.claim_machine_from_key(claim_key_str).await?;
+    /// println!("Verify PIN: {}", pin);
+    /// tx.send(true).unwrap(); // Accept the claim
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn claim_machine_from_key(
+        &self,
+        claim_key: &str,
+    ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
+        let claim_key = claim_key.parse::<ClaimKey>()?;
+        self.claim_machine_key(claim_key).await
     }
 
     /// Lists the endpoint IDs of all machines claimed by this manager.
