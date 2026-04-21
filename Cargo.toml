@@ -36,7 +36,7 @@ fedimint-lnv2-common = "0.10.0"
 fedimint-lnv2-remote-client = { git = "https://github.com/tvolk131/fedimint-lnv2-remote-client", rev = "b564b71a834ccf6875f804e02dd0cb65f62c5898" }
 fedimint-mint-client = "0.10.0"
 fedimint-rocksdb = "0.10.0"
-fedimint-tpe = "0.10.0"
+fedimint-tpe = "0.11.0"
 futures-util = "0.3.31"
 iroh = "0.97.0"
 iroh-blobs = "0.99.0"
