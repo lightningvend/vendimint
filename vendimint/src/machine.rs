@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use crate::fedimint_wallet::Wallet;
 pub use crate::vendimint_iroh::MachineState;
-use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, MachineProtocol};
+use crate::vendimint_iroh::{ClaimKey, ClaimPin, KvEntry, MachineConfig, MachineProtocol};
 use bitcoin::Network;
 use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
@@ -266,5 +266,31 @@ impl Machine {
     /// the context of vendimint - its meaning is up to the API caller.
     pub async fn get_kv_entries(&self) -> anyhow::Result<Vec<KvEntry>> {
         self.iroh_protocol.get_kv_entries().await
+    }
+
+    /// Gets the claim key for this machine.
+    ///
+    /// Returns `Some(ClaimKey)` if the machine is unclaimed, or `None` if the
+    /// machine is already claimed. The claim key can be shared with a manager
+    /// to allow them to claim this machine.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use vendimint::Machine;
+    /// # use bitcoin::Network;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let machine = Machine::new(std::path::Path::new("/tmp"), Network::Regtest).await?;
+    /// if let Some(claim_key) = machine.claim_key().await? {
+    ///     println!("Share this claim key: {}", claim_key);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn claim_key(&self) -> anyhow::Result<Option<ClaimKey>> {
+        match self.iroh_protocol.get_machine_state().await? {
+            MachineState::Unclaimed(claim_key) => Ok(Some(claim_key)),
+            MachineState::Claimed(_) => Ok(None),
+        }
     }
 }
