@@ -1,11 +1,10 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
-use crate::fedimint_wallet::Wallet;
+use crate::fedimint_wallet::{EcashExport, MintVersion, Wallet};
 use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, ManagerProtocol};
 use bitcoin::Network;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
-use fedimint_mint_client::OOBNotes;
 use iroh::{EndpointAddr, EndpointId, endpoint::Connection};
 use serde::Serialize;
 use tokio::sync::oneshot;
@@ -155,22 +154,32 @@ impl Manager {
         Ok(())
     }
 
-    pub async fn get_local_balance(&self) -> Amount {
+    pub async fn get_local_balance(&self) -> anyhow::Result<Amount> {
         self.wallet.get_local_balance().await
     }
 
-    /// Sweeps all ecash notes from a federation into out-of-band notes.
+    /// Returns the e-cash module selected for a joined federation.
+    pub async fn get_mint_version(&self, federation_id: FederationId) -> Option<MintVersion> {
+        self.wallet.get_mint_version(federation_id).await
+    }
+
+    /// Sweeps all e-cash notes from a federation into an encoded export.
     ///
     /// Returns `Some` if there were notes to sweep, `None` if the balance was zero.
-    /// The operation will be cancelled and the notes reclaimed after the specified
-    /// duration if they haven't been claimed elsewhere.
+    /// Mint-v1 exports are reclaimed after `try_cancel_after` if another client has
+    /// not redeemed them. Mint-v2 does not provide timed reclamation; callers can
+    /// inspect [`EcashExport::reclaims_automatically`] and must safeguard those
+    /// export tokens until they have been redeemed.
+    ///
+    /// `include_invite` is supported by mint v1. Mint-v2 exports identify their
+    /// federation but do not embed its invite endpoints.
     pub async fn sweep_all_ecash_notes<M: Serialize + Send>(
         &self,
         federation_id: FederationId,
         try_cancel_after: Duration,
         include_invite: bool,
         extra_meta: M,
-    ) -> anyhow::Result<Option<OOBNotes>> {
+    ) -> anyhow::Result<Option<EcashExport>> {
         self.wallet
             .sweep_all_ecash_notes(federation_id, try_cancel_after, include_invite, extra_meta)
             .await

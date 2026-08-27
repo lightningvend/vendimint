@@ -4,7 +4,7 @@ use bitcoin::Network;
 use fedimint_core::{Amount, invite_code::InviteCode};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
-use vendimint::MachineState;
+use vendimint::{MachineState, MintVersion};
 
 // TODO: Split up code better so we don't need this clippy rule exemption.
 #[allow(clippy::too_many_lines)]
@@ -54,6 +54,11 @@ async fn main() -> anyhow::Result<()> {
             manager
                 .update_federation(federation_invite_code.clone())
                 .await?;
+            assert_eq!(
+                manager.get_mint_version(federation_id).await,
+                Some(MintVersion::V2),
+                "dual-module federations should prefer mint v2"
+            );
 
             // Wait for the claim to sync.
             // TODO: Wait more intelligently.
@@ -103,7 +108,8 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::info!("Extracting ecash from manager...");
             let mut i = 0;
-            let ecash = loop {
+            let (ecash, balance_before_export) = loop {
+                let balance_before_export = manager.get_local_balance().await?;
                 if let Some(ecash) = manager
                     .sweep_all_ecash_notes(
                         federation_id,
@@ -113,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .await?
                 {
-                    break ecash;
+                    break (ecash, balance_before_export);
                 }
 
                 i += 1;
@@ -121,8 +127,12 @@ async fn main() -> anyhow::Result<()> {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             };
 
+            assert_eq!(ecash.mint_version(), MintVersion::V2);
+            assert!(!ecash.reclaims_automatically());
+            assert_eq!(ecash.total_amount(), balance_before_export);
             // Original 1,000 sat payment, minus federation and gateway fees.
-            assert_eq!(ecash.total_amount(), Amount::from_msats(989_698));
+            assert!(ecash.total_amount() < Amount::from_sats(1_000));
+            assert!(ecash.total_amount() > Amount::from_sats(900));
 
             tracing::info!("Extracted manager ecash balance: {}", ecash.total_amount());
 

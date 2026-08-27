@@ -1,12 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Duration,
 };
 
+use anyhow::{Context, anyhow, bail};
 use bip39::Mnemonic;
 use bitcoin::{
     Network, NetworkKind,
@@ -15,10 +16,17 @@ use bitcoin::{
     secp256k1::{PublicKey, Secp256k1},
 };
 use fedimint_bip39::Bip39RootSecretStrategy;
-use fedimint_client::{Client, ClientHandle, OperationId, RootSecret, secret::RootSecretStrategy};
+use fedimint_client::{
+    Client, ClientBuilder, ClientHandle, OperationId, RootSecret, secret::RootSecretStrategy,
+};
 use fedimint_connectors::ConnectorRegistry;
 use fedimint_core::{
-    Amount, config::FederationId, db::Database, invite_code::InviteCode, util::SafeUrl,
+    Amount,
+    base32::{FEDIMINT_PREFIX, encode_prefixed},
+    config::{ClientConfig, FederationId},
+    db::Database,
+    invite_code::InviteCode,
+    util::SafeUrl,
 };
 use fedimint_lnv2_common::{Bolt11InvoiceDescription, ContractId};
 use fedimint_lnv2_remote_client::{
@@ -26,11 +34,15 @@ use fedimint_lnv2_remote_client::{
     LightningRemoteClientInit,
 };
 use fedimint_mint_client::{
-    MintClientInit, MintClientModule, OOBNotes, SelectNotesWithExactAmount,
+    MintClientInit as MintV1ClientInit, MintClientModule as MintV1ClientModule,
+    SelectNotesWithExactAmount,
+};
+use fedimint_mintv2_client::{
+    MintClientInit as MintV2ClientInit, MintClientModule as MintV2ClientModule,
 };
 use fedimint_rocksdb::RocksDb;
 use lightning_invoice::Bolt11Invoice;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, mpsc, oneshot, watch};
 
 const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
@@ -38,6 +50,78 @@ const WALLET_VIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 const MNEMONIC_PATH: &str = "mnemonic.txt";
 const MNEMONIC_PASSWORD: &str = "";
 const DEFAULT_FEDERATION_PATH: &str = "default_federation.txt";
+const MINT_SELECTION_SUFFIX: &str = ".mint-module.json";
+const LNV2_KIND: &str = "lnv2";
+const MINT_V1_KIND: &str = "mint";
+const MINT_V2_KIND: &str = "mintv2";
+
+/// The e-cash module selected for a federation-backed wallet.
+///
+/// Vendimint selects exactly one generation per federation. New joins prefer
+/// mint v2, while an existing wallet remains pinned to its original selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MintVersion {
+    #[serde(rename = "mint")]
+    V1,
+    #[serde(rename = "mintv2")]
+    V2,
+}
+
+impl MintVersion {
+    const fn module_kind(self) -> &'static str {
+        match self {
+            Self::V1 => MINT_V1_KIND,
+            Self::V2 => MINT_V2_KIND,
+        }
+    }
+}
+
+impl Display for MintVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.module_kind())
+    }
+}
+
+/// An encoded e-cash export produced by either supported mint generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EcashExport {
+    token: String,
+    amount: Amount,
+    mint_version: MintVersion,
+    reclaims_automatically: bool,
+}
+
+impl EcashExport {
+    #[must_use]
+    pub const fn total_amount(&self) -> Amount {
+        self.amount
+    }
+
+    #[must_use]
+    pub const fn mint_version(&self) -> MintVersion {
+        self.mint_version
+    }
+
+    /// Whether the mint client will reclaim this export after its requested
+    /// timeout if another client has not redeemed it.
+    #[must_use]
+    pub const fn reclaims_automatically(&self) -> bool {
+        self.reclaims_automatically
+    }
+}
+
+impl Display for EcashExport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.token)
+    }
+}
+
+struct FederationClient {
+    client: ClientHandle,
+    mint_version: MintVersion,
+}
+
+type FederationClients = HashMap<FederationId, FederationClient>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletView {
@@ -49,6 +133,7 @@ pub struct FederationView {
     pub federation_id: FederationId,
     pub name: Option<String>,
     pub balance: Amount,
+    pub mint_version: MintVersion,
 }
 
 impl Display for FederationView {
@@ -97,7 +182,7 @@ fn format_amount(amount: Amount) -> String {
 
 pub struct Wallet {
     root_secret: RootSecret,
-    clients: Arc<RwLock<HashMap<FederationId, ClientHandle>>>,
+    clients: Arc<RwLock<FederationClients>>,
     fedimint_clients_data_dir: Mutex<PathBuf>,
     view_update_receiver: watch::Receiver<WalletView>,
     // Used to tell `Self.view_update_task` to immediately update the view.
@@ -144,22 +229,27 @@ impl Wallet {
                     () = tokio::time::sleep(WALLET_VIEW_UPDATE_INTERVAL) => None,
                 };
 
-                let current_state = Self::get_current_state(&clients_clone.read().await).await;
+                match Self::get_current_state(&clients_clone.read().await).await {
+                    Ok(current_state) => {
+                        // Ignoring clippy lint here since the `match` provides better clarity.
+                        #[allow(clippy::option_if_let_else)]
+                        let has_changed = match &last_state_or {
+                            Some(last_state) => &current_state != last_state,
+                            // If there was no last state, the state has changed.
+                            None => true,
+                        };
 
-                // Ignoring clippy lint here since the `match` provides better clarity.
-                #[allow(clippy::option_if_let_else)]
-                let has_changed = match &last_state_or {
-                    Some(last_state) => &current_state != last_state,
-                    // If there was no last state, the state has changed.
-                    None => true,
-                };
+                        if has_changed {
+                            last_state_or = Some(current_state.clone());
 
-                if has_changed {
-                    last_state_or = Some(current_state.clone());
-
-                    // If all receivers have been dropped, stop the task.
-                    if view_update_sender.send(current_state).is_err() {
-                        break;
+                            // If all receivers have been dropped, stop the task.
+                            if view_update_sender.send(current_state).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "Failed to update Vendimint wallet view");
                     }
                 }
 
@@ -208,10 +298,7 @@ impl Wallet {
     /// This ensures any streams opened by `get_update_stream` have yielded the
     /// latest view. This function should be called at the end of any function
     /// that modifies the view.
-    async fn force_update_view(
-        &self,
-        clients: RwLockWriteGuard<'_, HashMap<FederationId, ClientHandle>>,
-    ) {
+    async fn force_update_view(&self, clients: RwLockWriteGuard<'_, FederationClients>) {
         // While this function doesn't need to take the `clients` argument, it
         // does so to make it clear that any calling function must not hold a
         // write lock when calling this function. This is to prevent deadlocks,
@@ -226,11 +313,22 @@ impl Wallet {
     pub async fn get_lnv2_claim_pubkey(&self, federation_id: FederationId) -> Option<PublicKey> {
         let clients = self.clients.read().await;
 
-        let client = clients.get(&federation_id)?;
+        let federation = clients.get(&federation_id)?;
 
-        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
+        let lightning_module = federation
+            .client
+            .get_first_module::<LightningClientModule>()
+            .ok()?;
 
         Some(lightning_module.get_public_key())
+    }
+
+    pub async fn get_mint_version(&self, federation_id: FederationId) -> Option<MintVersion> {
+        self.clients
+            .read()
+            .await
+            .get(&federation_id)
+            .map(|federation| federation.mint_version)
     }
 
     async fn connect_to_joined_federations(&self) -> anyhow::Result<()> {
@@ -262,7 +360,11 @@ impl Wallet {
                     .into();
 
             let client = self
-                .build_client_from_federation_id(federation_id, db)
+                .build_client_from_federation_id(
+                    fedimint_clients_data_dir.as_path(),
+                    federation_id,
+                    db,
+                )
                 .await?;
 
             clients.insert(federation_id, client);
@@ -280,12 +382,18 @@ impl Wallet {
 
         let federation_data_dir = fedimint_clients_data_dir.join(federation_id.to_string());
 
-        // Short-circuit if we're already connected to this federation.
-        if !federation_data_dir.is_dir() {
+        // Short-circuit if we're already connected to this federation. Checking
+        // the live client map rather than the directory also permits retrying a
+        // join that previously failed after creating its RocksDB directory.
+        if !self.clients.read().await.contains_key(&federation_id) {
             let db: Database = RocksDb::build(&federation_data_dir).open().await?.into();
 
             let client = self
-                .build_client_from_invite_code(invite_code.clone(), db)
+                .build_client_from_invite_code(
+                    fedimint_clients_data_dir.as_path(),
+                    invite_code.clone(),
+                    db,
+                )
                 .await?;
 
             let mut clients = self.clients.write().await;
@@ -327,17 +435,24 @@ impl Wallet {
     pub async fn leave_federation(&self, federation_id: FederationId) -> anyhow::Result<()> {
         let mut clients = self.clients.write().await;
 
-        if let Some(client) = clients.remove(&federation_id) {
-            if client.get_balance_for_btc().await.unwrap().msats != 0 {
+        if let Some(federation) = clients.remove(&federation_id) {
+            let balance = match federation.client.get_balance_for_btc().await {
+                Ok(balance) => balance,
+                Err(error) => {
+                    clients.insert(federation_id, federation);
+                    return Err(error.context("could not read the balance before leaving"));
+                }
+            };
+            if balance.msats != 0 {
                 // Re-insert the client back into the clients map.
-                clients.insert(federation_id, client);
+                clients.insert(federation_id, federation);
 
-                return Err(anyhow::anyhow!(
+                return Err(anyhow!(
                     "Cannot leave federation with non-zero balance: {federation_id}"
                 ));
             }
 
-            client.shutdown().await;
+            federation.client.shutdown().await;
 
             let fedimint_clients_data_dir = self.fedimint_clients_data_dir.lock().await;
 
@@ -345,6 +460,14 @@ impl Wallet {
 
             if federation_data_dir.is_dir() {
                 tokio::fs::remove_dir_all(federation_data_dir).await?;
+            }
+
+            let mint_selection_path =
+                Self::mint_selection_path(fedimint_clients_data_dir.as_path(), federation_id);
+            match tokio::fs::remove_file(mint_selection_path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
         }
 
@@ -360,27 +483,35 @@ impl Wallet {
     /// the view hasn't been updated elsewhere in a way that
     /// could de-sync the view.
     async fn get_current_state(
-        clients: &RwLockReadGuard<'_, HashMap<FederationId, ClientHandle>>,
-    ) -> WalletView {
+        clients: &RwLockReadGuard<'_, FederationClients>,
+    ) -> anyhow::Result<WalletView> {
         let mut federations = BTreeMap::new();
 
-        for (federation_id, client) in clients.iter() {
+        for (federation_id, federation) in clients.iter() {
             federations.insert(
                 *federation_id,
                 FederationView {
                     federation_id: *federation_id,
-                    name: client
+                    name: federation
+                        .client
                         .config()
                         .await
                         .global
                         .federation_name()
                         .map(ToString::to_string),
-                    balance: client.get_balance_for_btc().await.unwrap(),
+                    balance: federation
+                        .client
+                        .get_balance_for_btc()
+                        .await
+                        .with_context(|| {
+                            format!("could not read balance for federation {federation_id}")
+                        })?,
+                    mint_version: federation.mint_version,
                 },
             );
         }
 
-        WalletView { federations }
+        Ok(WalletView { federations })
     }
 
     // TODO: Return a strongly typed result.
@@ -395,11 +526,14 @@ impl Wallet {
     ) -> anyhow::Result<(Bolt11Invoice, OperationId)> {
         let clients = self.clients.read().await;
 
-        let client = clients
+        let federation = clients
             .get(&federation_id)
-            .ok_or_else(|| anyhow::anyhow!("Client for federation {federation_id} not found"))?;
+            .ok_or_else(|| anyhow!("Client for federation {federation_id} not found"))?;
 
-        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
+        let lightning_module = federation
+            .client
+            .get_first_module::<LightningClientModule>()
+            .context("the federation does not have a compatible lnv2 module")?;
 
         Ok(lightning_module
             .remote_receive(claimer_pk, amount, expiry_secs, description, gateway)
@@ -412,29 +546,38 @@ impl Wallet {
     ) -> anyhow::Result<FinalRemoteReceiveOperationState> {
         let clients = self.clients.read().await;
 
-        for client in clients.values() {
-            if client.operation_exists(operation_id).await {
-                let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
+        for federation in clients.values() {
+            if federation.client.operation_exists(operation_id).await {
+                let lightning_module = federation
+                    .client
+                    .get_first_module::<LightningClientModule>()
+                    .context("the federation does not have a compatible lnv2 module")?;
 
                 return lightning_module.await_remote_receive(operation_id).await;
             }
         }
 
-        Err(anyhow::anyhow!(
+        Err(anyhow!(
             "Client not found containing operation id {}",
             operation_id.0.to_upper_hex_string()
         ))
     }
 
-    pub async fn get_local_balance(&self) -> Amount {
+    pub async fn get_local_balance(&self) -> anyhow::Result<Amount> {
         let mut balance = Amount::ZERO;
 
         let clients = self.clients.read().await;
 
-        for client in clients.values() {
-            balance += client.get_balance_for_btc().await.unwrap();
+        for (federation_id, federation) in clients.iter() {
+            balance += federation
+                .client
+                .get_balance_for_btc()
+                .await
+                .with_context(|| {
+                    format!("could not read balance for federation {federation_id}")
+                })?;
         }
-        balance
+        Ok(balance)
     }
 
     pub async fn sweep_all_ecash_notes<M: Serialize + Send>(
@@ -443,46 +586,83 @@ impl Wallet {
         try_cancel_after: Duration,
         include_invite: bool,
         extra_meta: M,
-    ) -> anyhow::Result<Option<OOBNotes>> {
+    ) -> anyhow::Result<Option<EcashExport>> {
         let clients = self.clients.read().await;
 
-        let client = clients
+        let federation = clients
             .get(&federation_id)
-            .ok_or_else(|| anyhow::anyhow!("Client for federation {federation_id} not found"))?;
+            .ok_or_else(|| anyhow!("Client for federation {federation_id} not found"))?;
 
-        let mint_module = client.get_first_module::<MintClientModule>().unwrap();
+        match federation.mint_version {
+            MintVersion::V1 => {
+                let mint_module = federation
+                    .client
+                    .get_first_module::<MintV1ClientModule>()
+                    .context("the selected mint v1 module is unavailable")?;
 
-        let ecash_balance = mint_module
-            .get_note_counts_by_denomination(
-                &mut mint_module.db.begin_transaction().await.to_ref_nc(),
-            )
-            .await
-            .total_amount();
+                let ecash_balance = mint_module
+                    .get_note_counts_by_denomination(
+                        &mut mint_module.db.begin_transaction().await.to_ref_nc(),
+                    )
+                    .await
+                    .total_amount();
 
-        // This is needed because `spend_notes_with_selector`
-        // will panic if the requested amount is zero.
-        if ecash_balance == Amount::ZERO {
-            return Ok(None);
+                // This is needed because `spend_notes_with_selector`
+                // will panic if the requested amount is zero.
+                if ecash_balance == Amount::ZERO {
+                    return Ok(None);
+                }
+
+                // Note: Since we use the `SelectNotesWithExactAmount` note selector, we
+                // could hit a race condition if this method is called twice concurrently.
+                // Both calls could get the same value for `ecash_balance`, but then one
+                // of the calls sweeps all of the notes while the other call gets an empty
+                // set of notes, resulting in that call's `spend_notes_with_selector`
+                // failing with an error. In practice this shouldn't matter much, but it'd
+                // be better to eventually use a more tailor-built note selector.
+                let (_operation_id, oob_notes) = mint_module
+                    .spend_notes_with_selector(
+                        &SelectNotesWithExactAmount,
+                        ecash_balance,
+                        try_cancel_after,
+                        include_invite,
+                        extra_meta,
+                    )
+                    .await?;
+
+                Ok(Some(EcashExport {
+                    token: oob_notes.to_string(),
+                    amount: oob_notes.total_amount(),
+                    mint_version: MintVersion::V1,
+                    reclaims_automatically: true,
+                }))
+            }
+            MintVersion::V2 => {
+                let mint_module = federation
+                    .client
+                    .get_first_module::<MintV2ClientModule>()
+                    .context("the selected mint v2 module is unavailable")?;
+                let ecash_balance = federation
+                    .client
+                    .get_balance_for_btc()
+                    .await
+                    .context("could not read the mint v2 balance")?;
+                if ecash_balance == Amount::ZERO {
+                    return Ok(None);
+                }
+
+                let ecash = mint_module
+                    .send(ecash_balance, serde_json::to_value(extra_meta)?)
+                    .await?;
+
+                Ok(Some(EcashExport {
+                    token: encode_prefixed(FEDIMINT_PREFIX, &ecash),
+                    amount: ecash.amount(),
+                    mint_version: MintVersion::V2,
+                    reclaims_automatically: false,
+                }))
+            }
         }
-
-        // Note: Since we use the `SelectNotesWithExactAmount` note selector, we
-        // could hit a race condition if this method is called twice concurrently.
-        // Both calls could get the same value for `ecash_balance`, but then one
-        // of the calls sweeps all of the notes while the other call gets an empty
-        // set of notes, resulting in that call's `spend_notes_with_selector`
-        // failing with an error. In practice this shouldn't matter much, but it'd
-        // be better to eventually use a more tailor-built note selector.
-        let (_operation_id, oob_notes) = mint_module
-            .spend_notes_with_selector(
-                &SelectNotesWithExactAmount,
-                ecash_balance,
-                try_cancel_after,
-                include_invite,
-                extra_meta,
-            )
-            .await?;
-
-        Ok(Some(oob_notes))
     }
 
     /// Get claimable contracts from a federation.
@@ -496,9 +676,12 @@ impl Wallet {
     ) -> Option<Vec<ClaimableContract>> {
         let clients = self.clients.read().await;
 
-        let client = clients.get(&federation_id)?;
+        let federation = clients.get(&federation_id)?;
 
-        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
+        let lightning_module = federation
+            .client
+            .get_first_module::<LightningClientModule>()
+            .ok()?;
 
         let contracts = lightning_module
             .get_claimable_contracts(claimer_pk, limit_or)
@@ -514,11 +697,16 @@ impl Wallet {
     ) {
         let clients = self.clients.read().await;
 
-        let Some(client) = clients.get(&federation_id) else {
+        let Some(federation) = clients.get(&federation_id) else {
             return;
         };
 
-        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
+        let Ok(lightning_module) = federation
+            .client
+            .get_first_module::<LightningClientModule>()
+        else {
+            return;
+        };
 
         lightning_module
             .remove_claimed_contracts(contract_ids)
@@ -532,71 +720,234 @@ impl Wallet {
     ) -> anyhow::Result<()> {
         let clients = self.clients.read().await;
 
-        let Some(client) = clients.get(&federation_id) else {
-            return Err(anyhow::anyhow!("Client not found"));
+        let Some(federation) = clients.get(&federation_id) else {
+            return Err(anyhow!("Client not found"));
         };
 
-        let lightning_module = client.get_first_module::<LightningClientModule>().unwrap();
+        let lightning_module = federation
+            .client
+            .get_first_module::<LightningClientModule>()
+            .context("the federation does not have a compatible lnv2 module")?;
 
         lightning_module.claim_contracts(claimable_contracts).await
     }
 
     async fn build_client_from_invite_code(
         &self,
+        data_dir: &Path,
         invite_code: InviteCode,
         db: Database,
-    ) -> anyhow::Result<ClientHandle> {
+    ) -> anyhow::Result<FederationClient> {
         let is_initialized = fedimint_client::Client::is_initialized(&db).await;
+        if is_initialized {
+            return self
+                .build_client_from_federation_id(data_dir, invite_code.federation_id(), db)
+                .await;
+        }
 
-        let mut client_builder = Client::builder().await?;
+        // Preview first so Vendimint can explicitly select one e-cash module.
+        // Registering both would leave the primary-module choice to instance-id
+        // ordering because mint v1 and v2 currently advertise equal priority.
+        let config = Client::builder()
+            .await?
+            .preview(Self::build_client_connectors().await?, &invite_code)
+            .await?
+            .config()
+            .clone();
+        let mint_version = Self::preferred_mint_version(&config)?;
+        Self::persist_mint_version(data_dir, invite_code.federation_id(), mint_version).await?;
 
-        // Add lightning and e-cash modules. For now we don't support on-chain.
-        client_builder.with_module(MintClientInit);
-        client_builder.with_module(LightningRemoteClientInit::default());
+        let client = Self::client_builder(mint_version)
+            .await?
+            .preview_with_existing_config(
+                Self::build_client_connectors().await?,
+                config,
+                invite_code.api_secret(),
+            )
+            .await?
+            .join(db, self.root_secret.clone())
+            .await?;
 
-        let connectors = Self::build_client_connectors().await?;
-
-        let root_secret = self.root_secret.clone();
-
-        let client = if is_initialized {
-            client_builder.open(connectors, db, root_secret).await?
-        } else {
-            client_builder
-                .preview(connectors, &invite_code)
-                .await?
-                .join(db, root_secret)
-                .await?
-        };
-
-        Ok(client)
+        Ok(FederationClient {
+            client,
+            mint_version,
+        })
     }
 
     async fn build_client_from_federation_id(
         &self,
+        data_dir: &Path,
         federation_id: FederationId,
         db: Database,
-    ) -> anyhow::Result<ClientHandle> {
+    ) -> anyhow::Result<FederationClient> {
         let is_initialized = fedimint_client::Client::is_initialized(&db).await;
+        if !is_initialized {
+            bail!("Federation with ID {federation_id} is not initialized.");
+        }
 
-        let mut client_builder = Client::builder().await?;
+        let probe = Client::builder().await?;
+        let config = probe.load_existing_config(&db).await?;
+        let mint_version =
+            if let Some(mint_version) = Self::load_mint_version(data_dir, federation_id).await? {
+                Self::validate_mint_version(&config, mint_version)?;
+                mint_version
+            } else {
+                let mint_version = Self::legacy_mint_version(&config)?;
+                Self::persist_mint_version(data_dir, federation_id, mint_version).await?;
+                mint_version
+            };
 
-        // Add lightning and e-cash modules. For now we don't support on-chain.
-        client_builder.with_module(MintClientInit);
-        client_builder.with_module(LightningRemoteClientInit::default());
+        let client = Self::client_builder(mint_version)
+            .await?
+            .open(
+                Self::build_client_connectors().await?,
+                db,
+                self.root_secret.clone(),
+            )
+            .await?;
 
-        let connectors = Self::build_client_connectors().await?;
+        Ok(FederationClient {
+            client,
+            mint_version,
+        })
+    }
 
-        let root_secret = self.root_secret.clone();
+    async fn client_builder(mint_version: MintVersion) -> anyhow::Result<ClientBuilder> {
+        let mut builder = Client::builder().await?;
+        match mint_version {
+            MintVersion::V1 => builder.with_module(MintV1ClientInit),
+            MintVersion::V2 => builder.with_module(MintV2ClientInit),
+        }
+        builder.with_module(LightningRemoteClientInit::default());
+        Ok(builder)
+    }
 
-        let client = if is_initialized {
-            client_builder.open(connectors, db, root_secret).await?
+    fn preferred_mint_version(config: &ClientConfig) -> anyhow::Result<MintVersion> {
+        Self::preferred_mint_version_from_support(
+            Self::has_module(config, LNV2_KIND),
+            Self::has_module(config, MINT_V1_KIND),
+            Self::has_module(config, MINT_V2_KIND),
+        )
+    }
+
+    fn preferred_mint_version_from_support(
+        has_lnv2: bool,
+        has_v1: bool,
+        has_v2: bool,
+    ) -> anyhow::Result<MintVersion> {
+        if !has_lnv2 {
+            bail!("Federation does not have a compatible lnv2 module");
+        }
+        if has_v2 {
+            Ok(MintVersion::V2)
+        } else if has_v1 {
+            Ok(MintVersion::V1)
         } else {
-            return Err(anyhow::anyhow!(
-                "Federation with ID {federation_id} is not initialized."
-            ));
-        };
+            bail!("Federation has neither a compatible mint nor mintv2 module")
+        }
+    }
 
-        Ok(client)
+    fn legacy_mint_version(config: &ClientConfig) -> anyhow::Result<MintVersion> {
+        Self::legacy_mint_version_from_support(
+            Self::has_module(config, LNV2_KIND),
+            Self::has_module(config, MINT_V1_KIND),
+            Self::has_module(config, MINT_V2_KIND),
+        )
+    }
+
+    fn legacy_mint_version_from_support(
+        has_lnv2: bool,
+        has_v1: bool,
+        has_v2: bool,
+    ) -> anyhow::Result<MintVersion> {
+        if !has_lnv2 {
+            bail!("Federation does not have a compatible lnv2 module");
+        }
+        match (has_v1, has_v2) {
+            // Before Vendimint persisted a selection, it only registered mint
+            // v1. A marker-less initialized wallet therefore used v1 even if
+            // its federation config also advertised mint v2.
+            (true, _) => Ok(MintVersion::V1),
+            (false, true) => Ok(MintVersion::V2),
+            (false, false) => {
+                bail!("Federation has neither a compatible mint nor mintv2 module")
+            }
+        }
+    }
+
+    fn validate_mint_version(
+        config: &ClientConfig,
+        mint_version: MintVersion,
+    ) -> anyhow::Result<()> {
+        Self::require_lnv2(config)?;
+        if !Self::has_module(config, mint_version.module_kind()) {
+            bail!(
+                "Federation no longer advertises the pinned {} module",
+                mint_version.module_kind()
+            );
+        }
+        Ok(())
+    }
+
+    fn require_lnv2(config: &ClientConfig) -> anyhow::Result<()> {
+        if !Self::has_module(config, LNV2_KIND) {
+            bail!("Federation does not have a compatible lnv2 module");
+        }
+        Ok(())
+    }
+
+    fn has_module(config: &ClientConfig, kind: &str) -> bool {
+        config
+            .modules
+            .values()
+            .any(|module| module.kind().as_str() == kind)
+    }
+
+    fn mint_selection_path(data_dir: &Path, federation_id: FederationId) -> PathBuf {
+        data_dir.join(format!("{federation_id}{MINT_SELECTION_SUFFIX}"))
+    }
+
+    async fn load_mint_version(
+        data_dir: &Path,
+        federation_id: FederationId,
+    ) -> anyhow::Result<Option<MintVersion>> {
+        let path = Self::mint_selection_path(data_dir, federation_id);
+        let encoded = match tokio::fs::read(&path).await {
+            Ok(encoded) => encoded,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        serde_json::from_slice(&encoded)
+            .with_context(|| format!("could not decode mint selection at {}", path.display()))
+            .map(Some)
+    }
+
+    async fn persist_mint_version(
+        data_dir: &Path,
+        federation_id: FederationId,
+        mint_version: MintVersion,
+    ) -> anyhow::Result<()> {
+        let path = Self::mint_selection_path(data_dir, federation_id);
+        if let Some(existing) = Self::load_mint_version(data_dir, federation_id).await? {
+            if existing != mint_version {
+                bail!("Federation is pinned to {existing}, refusing to switch to {mint_version}");
+            }
+            return Ok(());
+        }
+
+        let temporary_path = path.with_file_name(format!(
+            "{}.tmp",
+            path.file_name()
+                .expect("mint selection path always has a file name")
+                .to_string_lossy()
+        ));
+        tokio::fs::write(&temporary_path, serde_json::to_vec(&mint_version)?).await?;
+        tokio::fs::File::open(&temporary_path)
+            .await?
+            .sync_all()
+            .await?;
+        tokio::fs::rename(&temporary_path, &path).await?;
+        Ok(())
     }
 
     async fn build_client_connectors() -> anyhow::Result<ConnectorRegistry> {
@@ -629,5 +980,58 @@ const fn coin_type_from_network(network_kind: NetworkKind) -> u32 {
     match network_kind {
         NetworkKind::Main => 0,
         NetworkKind::Test => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_federations_prefer_mint_v2() {
+        assert_eq!(
+            Wallet::preferred_mint_version_from_support(true, true, true).unwrap(),
+            MintVersion::V2
+        );
+        assert_eq!(
+            Wallet::preferred_mint_version_from_support(true, true, false).unwrap(),
+            MintVersion::V1
+        );
+        assert_eq!(
+            Wallet::preferred_mint_version_from_support(true, false, true).unwrap(),
+            MintVersion::V2
+        );
+    }
+
+    #[test]
+    fn incompatible_federations_are_rejected() {
+        let missing_lnv2 =
+            Wallet::preferred_mint_version_from_support(false, true, true).unwrap_err();
+        assert!(missing_lnv2.to_string().contains("lnv2"));
+
+        let missing_mint =
+            Wallet::preferred_mint_version_from_support(true, false, false).unwrap_err();
+        assert!(missing_mint.to_string().contains("neither"));
+    }
+
+    #[test]
+    fn legacy_wallets_remain_on_mint_v1() {
+        assert_eq!(
+            Wallet::legacy_mint_version_from_support(true, true, true).unwrap(),
+            MintVersion::V1
+        );
+        assert_eq!(
+            Wallet::legacy_mint_version_from_support(true, true, false).unwrap(),
+            MintVersion::V1
+        );
+    }
+
+    #[test]
+    fn mint_selection_encoding_is_stable() {
+        assert_eq!(serde_json::to_string(&MintVersion::V1).unwrap(), "\"mint\"");
+        assert_eq!(
+            serde_json::to_string(&MintVersion::V2).unwrap(),
+            "\"mintv2\""
+        );
     }
 }

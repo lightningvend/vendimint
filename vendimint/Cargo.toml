@@ -26,6 +26,7 @@ fedimint-derive-secret = { workspace = true }
 fedimint-lnv2-common = { workspace = true }
 fedimint-lnv2-remote-client = { workspace = true }
 fedimint-mint-client = { workspace = true }
+fedimint-mintv2-client = { workspace = true }
 fedimint-rocksdb = { workspace = true }
 futures-util = { workspace = true }
 iroh = { workspace = true }

@@ -20,6 +20,28 @@ As mentioned above, [Fedimint](https://fedimint.org/) is used as the underlying 
 
 For normal lightning receives, steps 1 and 3 are performed by the same device. In vendimint, step 1 is performed by a machine and step 3 is performed by its manager.
 
+### Supported Federation Modules
+
+Vendimint requires the `lnv2` module and supports both the legacy `mint` e-cash
+module and `mintv2`. The choice is made independently for each federation when
+it is first joined:
+
+- A federation with only `mint` uses mint v1.
+- A federation with only `mintv2` uses mint v2.
+- A federation advertising both uses mint v2.
+- A federation without `lnv2` or without either supported mint is rejected.
+
+The selected mint is persisted with the local wallet and is never changed
+implicitly. This prevents a federation adding `mintv2` later from making an
+existing mint-v1 balance appear to disappear after an application restart.
+Wallets created by older Vendimint versions are recorded as mint v1 the first
+time they are opened, since those releases only registered the mint-v1 client.
+
+Both mint versions support encoded e-cash exports. Mint-v1 exports retain their
+existing timed reclamation behavior. Mint-v2 exports do not automatically
+reclaim themselves, so callers must safeguard the returned token until it has
+been redeemed.
+
 ### Key-Value Store Interface
 
 Vendimint provides a shared key-value store between machines and their managers for application-specific data exchange. The KV interface includes:
