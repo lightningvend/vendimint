@@ -6,7 +6,7 @@ use bitcoin::Network;
 use fedimint_core::Amount;
 use fedimint_core::{config::FederationId, invite_code::InviteCode};
 use fedimint_mint_client::OOBNotes;
-use iroh::{EndpointAddr, EndpointId};
+use iroh::{EndpointAddr, EndpointId, endpoint::Connection};
 use serde::Serialize;
 use tokio::sync::oneshot;
 
@@ -102,6 +102,18 @@ impl Manager {
         endpoint_addr: EndpointAddr,
     ) -> anyhow::Result<(ClaimPin, oneshot::Sender<bool>)> {
         self.iroh_protocol.claim_machine(endpoint_addr).await
+    }
+
+    /// Connects to an application protocol registered by a claimed machine.
+    ///
+    /// The connection uses the manager's existing vendimint Iroh identity, so
+    /// the machine can authenticate it as the manager that completed the claim.
+    pub async fn connect_machine(
+        &self,
+        machine_id: &EndpointId,
+        alpn: &[u8],
+    ) -> anyhow::Result<Connection> {
+        self.iroh_protocol.connect_machine(machine_id, alpn).await
     }
 
     /// Lists the endpoint IDs of all machines claimed by this manager.

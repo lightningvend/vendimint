@@ -1,18 +1,63 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::fedimint_wallet::Wallet;
 pub use crate::vendimint_iroh::MachineState;
-use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, MachineProtocol};
+use crate::vendimint_iroh::{
+    AdditionalProtocol, ClaimPin, KvEntry, MachineConfig, MachineProtocol,
+};
 use bitcoin::Network;
 use fedimint_client::OperationId;
 use fedimint_core::{Amount, util::SafeUrl};
 use fedimint_lnv2_common::Bolt11InvoiceDescription;
 use fedimint_lnv2_remote_client::FinalRemoteReceiveOperationState;
+use iroh::protocol::ProtocolHandler;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::oneshot;
 
 const PROTOCOL_SUBDIR: &str = "protocol";
 const FEDIMINT_SUBDIR: &str = "fedimint";
+
+/// Configures a [`Machine`] before its Iroh endpoint is started.
+pub struct MachineBuilder {
+    storage_path: PathBuf,
+    network: Network,
+    manager_protocols: Vec<AdditionalProtocol>,
+}
+
+impl MachineBuilder {
+    /// Registers an application protocol which only the manager that claimed
+    /// this machine may access.
+    ///
+    /// The protocol is installed on the same Iroh endpoint as vendimint. Its
+    /// handler is invoked only after a full handshake authenticates the remote
+    /// endpoint as the claimed manager, so custom `ProtocolHandler::on_accepting`
+    /// behavior and 0-RTT are intentionally not forwarded.
+    pub fn accept_manager_protocol(
+        mut self,
+        alpn: impl AsRef<[u8]>,
+        handler: impl ProtocolHandler,
+    ) -> anyhow::Result<Self> {
+        let protocol = AdditionalProtocol::new(alpn, handler)?;
+        if self
+            .manager_protocols
+            .iter()
+            .any(|registered| registered.alpn() == protocol.alpn())
+        {
+            anyhow::bail!("application ALPN was registered more than once");
+        }
+        self.manager_protocols.push(protocol);
+        Ok(self)
+    }
+
+    /// Starts the configured machine.
+    pub async fn build(self) -> anyhow::Result<Machine> {
+        Machine::new_inner(self.storage_path, self.network, self.manager_protocols).await
+    }
+}
 
 /// A device/application that receives funds (e.g., vending machine, point-of-sale).
 pub struct Machine {
@@ -27,6 +72,16 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// Creates a builder for a machine instance.
+    #[must_use]
+    pub fn builder(storage_path: &Path, network: Network) -> MachineBuilder {
+        MachineBuilder {
+            storage_path: storage_path.to_owned(),
+            network,
+            manager_protocols: Vec::new(),
+        }
+    }
+
     /// Creates a new machine instance.
     ///
     /// The storage path provided should not contain any data
@@ -39,10 +94,22 @@ impl Machine {
     /// networks is safe. Data is partitioned by network, so
     /// each network has its own isolated storage.
     pub async fn new(storage_path: &Path, network: Network) -> anyhow::Result<Self> {
+        Self::builder(storage_path, network).build().await
+    }
+
+    async fn new_inner(
+        storage_path: PathBuf,
+        network: Network,
+        manager_protocols: Vec<AdditionalProtocol>,
+    ) -> anyhow::Result<Self> {
         let network_partitioned_storage_path = storage_path.join(network.to_string());
 
         let iroh_protocol = Arc::new(
-            MachineProtocol::new(&network_partitioned_storage_path.join(PROTOCOL_SUBDIR)).await?,
+            MachineProtocol::with_manager_protocols(
+                &network_partitioned_storage_path.join(PROTOCOL_SUBDIR),
+                manager_protocols,
+            )
+            .await?,
         );
 
         let wallet = Arc::new(
@@ -266,5 +333,45 @@ impl Machine {
     /// the context of vendimint - its meaning is up to the API caller.
     pub async fn get_kv_entries(&self) -> anyhow::Result<Vec<KvEntry>> {
         self.iroh_protocol.get_kv_entries().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iroh::{
+        endpoint::Connection,
+        protocol::{AcceptError, ProtocolHandler},
+    };
+
+    #[derive(Debug)]
+    struct NoopHandler;
+
+    impl ProtocolHandler for NoopHandler {
+        async fn accept(&self, _connection: Connection) -> Result<(), AcceptError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn manager_protocol_registration_validates_alpns() {
+        let builder = Machine::builder(Path::new("unused"), Network::Regtest)
+            .accept_manager_protocol(b"test/application/0", NoopHandler)
+            .unwrap();
+        assert!(
+            builder
+                .accept_manager_protocol(b"test/application/0", NoopHandler)
+                .is_err()
+        );
+        assert!(
+            Machine::builder(Path::new("unused"), Network::Regtest)
+                .accept_manager_protocol(b"machine-claim/0", NoopHandler)
+                .is_err()
+        );
+        assert!(
+            Machine::builder(Path::new("unused"), Network::Regtest)
+                .accept_manager_protocol([], NoopHandler)
+                .is_err()
+        );
     }
 }

@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 
 use iroh::{
     EndpointAddr, EndpointId,
+    endpoint::Connection,
     protocol::{ProtocolHandler, Router},
 };
 use iroh_blobs::BlobsProtocol;
@@ -22,8 +23,9 @@ use tokio::{io::AsyncWriteExt, sync::oneshot};
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor,
-    MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
+    AdditionalProtocol, CLAIM_ALPN, CLAIMABLE_CONTRACT_PREFIX, ClaimPin, KV_PREFIX, KvEntry,
+    KvEntryAuthor, MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol,
+    claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKETS_SUBDIR: &str = "machine_doc_tickets";
@@ -116,6 +118,22 @@ impl ManagerProtocol {
         });
 
         Ok((pin, tx))
+    }
+
+    pub async fn connect_machine(
+        &self,
+        machine_id: &EndpointId,
+        alpn: &[u8],
+    ) -> anyhow::Result<Connection> {
+        AdditionalProtocol::validate_alpn(alpn)?;
+        let machine = self.get_machine(machine_id).await?;
+        let endpoint_addr = machine
+            .nodes
+            .into_iter()
+            .find(|address| address.id == *machine_id)
+            .ok_or_else(|| anyhow::anyhow!("machine document ticket has no matching endpoint"))?;
+
+        Ok(self.router.endpoint().connect(endpoint_addr, alpn).await?)
     }
 
     async fn get_machine(&self, machine_id: &EndpointId) -> anyhow::Result<DocTicket> {

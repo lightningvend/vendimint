@@ -30,8 +30,8 @@ use tokio::{
 use crate::vendimint_iroh::shared::PING_MAGIC_BYTES;
 
 use super::shared::{
-    CLAIM_ALPN, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor, MACHINE_CONFIG_KEY, MachineConfig,
-    SharedProtocol, claim_pin_from_keying_material,
+    AdditionalProtocol, CLAIM_ALPN, ClaimPin, KV_PREFIX, KvEntry, KvEntryAuthor,
+    MACHINE_CONFIG_KEY, MachineConfig, SharedProtocol, claim_pin_from_keying_material,
 };
 
 const MACHINE_DOC_TICKET_PATH: &str = "machine_doc_ticket.json";
@@ -62,6 +62,34 @@ struct ClaimHandler {
     app_storage_path: PathBuf,
     claim_request_sender: mpsc::Sender<(ClaimPin, oneshot::Sender<bool>)>,
     claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
+}
+
+#[derive(Debug)]
+struct ClaimedManagerOnly {
+    claimed_manager_pubkey: Arc<Mutex<Option<PublicKey>>>,
+    inner: Box<dyn iroh::protocol::DynProtocolHandler>,
+}
+
+impl ProtocolHandler for ClaimedManagerOnly {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        let is_claimed_manager = self
+            .claimed_manager_pubkey
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|manager| *manager == connection.remote_id());
+
+        if !is_claimed_manager {
+            connection.close(0u32.into(), b"not_claimed_manager");
+            return Ok(());
+        }
+
+        self.inner.accept(connection).await
+    }
+
+    fn shutdown(&self) -> impl Future<Output = ()> + Send {
+        self.inner.shutdown()
+    }
 }
 
 // TODO: Find a way to remove the need for this function.
@@ -165,7 +193,15 @@ impl ProtocolHandler for ClaimHandler {
 }
 
 impl MachineProtocol {
+    #[cfg(test)]
     pub async fn new(storage_path: &Path) -> anyhow::Result<Self> {
+        Self::with_manager_protocols(storage_path, Vec::new()).await
+    }
+
+    pub(crate) async fn with_manager_protocols(
+        storage_path: &Path,
+        manager_protocols: Vec<AdditionalProtocol>,
+    ) -> anyhow::Result<Self> {
         let mut shared_protocol = SharedProtocol::new(storage_path).await?;
 
         let manager_public_key_path = shared_protocol
@@ -190,6 +226,15 @@ impl MachineProtocol {
         };
 
         shared_protocol.router_builder = shared_protocol.router_builder.accept(CLAIM_ALPN, handler);
+
+        for protocol in manager_protocols {
+            let (alpn, inner) = protocol.into_parts();
+            let handler = ClaimedManagerOnly {
+                claimed_manager_pubkey: claimed_manager_pubkey.clone(),
+                inner,
+            };
+            shared_protocol.router_builder = shared_protocol.router_builder.accept(alpn, handler);
+        }
 
         Ok(Self {
             router: shared_protocol.router_builder.spawn(),

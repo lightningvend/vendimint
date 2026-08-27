@@ -9,7 +9,7 @@ use iroh::{
     Endpoint, SecretKey,
     endpoint::Connection,
     endpoint::presets,
-    protocol::{Router, RouterBuilder},
+    protocol::{DynProtocolHandler, ProtocolHandler, Router, RouterBuilder},
 };
 use iroh_blobs::{ALPN as BLOBS_ALPN, BlobsProtocol, store::fs::FsStore};
 use iroh_docs::{ALPN as DOCS_ALPN, protocol::Docs};
@@ -32,6 +32,46 @@ pub const PING_MAGIC_BYTES: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
 const IROH_SUBDIR: &str = "iroh";
 const APP_SUBDIR: &str = "app";
 const SECRET_KEY_FILE: &str = "secret.key";
+
+pub struct AdditionalProtocol {
+    alpn: Vec<u8>,
+    handler: Box<dyn DynProtocolHandler>,
+}
+
+impl AdditionalProtocol {
+    pub(crate) fn new(
+        alpn: impl AsRef<[u8]>,
+        handler: impl ProtocolHandler,
+    ) -> anyhow::Result<Self> {
+        let alpn = alpn.as_ref();
+        Self::validate_alpn(alpn)?;
+
+        Ok(Self {
+            alpn: alpn.to_vec(),
+            handler: handler.into(),
+        })
+    }
+
+    pub(crate) fn validate_alpn(alpn: &[u8]) -> anyhow::Result<()> {
+        if alpn.is_empty() || alpn.len() > u8::MAX.into() {
+            anyhow::bail!("application ALPN must contain between 1 and 255 bytes");
+        }
+
+        if alpn == BLOBS_ALPN || alpn == GOSSIP_ALPN || alpn == DOCS_ALPN || alpn == CLAIM_ALPN {
+            anyhow::bail!("application ALPN is reserved by vendimint");
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn alpn(&self) -> &[u8] {
+        &self.alpn
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Box<dyn DynProtocolHandler>) {
+        (self.alpn, self.handler)
+    }
+}
 
 /// A machine's configuration, which determines how funds are received.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]

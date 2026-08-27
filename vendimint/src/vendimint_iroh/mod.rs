@@ -4,6 +4,7 @@ mod shared;
 
 pub use machine::{MachineProtocol, MachineState};
 pub use manager::ManagerProtocol;
+pub use shared::AdditionalProtocol;
 pub use shared::{ClaimPin, KvEntry, KvEntryAuthor, MachineConfig};
 
 #[cfg(test)]
@@ -19,8 +20,12 @@ mod tests {
     };
     use fedimint_lnv2_common::contracts::{IncomingContract, PaymentImage};
     use fedimint_lnv2_remote_client::ClaimableContract;
-    use iroh::EndpointId;
-    use tokio::time::Instant;
+    use iroh::{
+        Endpoint, EndpointId,
+        endpoint::{Connection, presets},
+        protocol::{AcceptError, ProtocolHandler},
+    };
+    use tokio::{sync::mpsc, time::Instant};
     use tpe::{AggregatePublicKey, G1Affine};
 
     const IROH_WAIT_DELAY: Duration = Duration::from_millis(100);
@@ -31,6 +36,29 @@ mod tests {
     const TEST_KEY: &[u8] = b"test_key";
     const TEST_VALUE: &[u8] = b"test_value";
     const NONEXISTENT_KEY: &[u8] = b"nonexistent_key";
+    const TEST_MANAGER_ALPN: &[u8] = b"vendimint-test/manager/0";
+
+    #[derive(Clone, Debug)]
+    struct EchoHandler {
+        accepted_connections: mpsc::UnboundedSender<EndpointId>,
+    }
+
+    impl ProtocolHandler for EchoHandler {
+        async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+            let _ = self.accepted_connections.send(connection.remote_id());
+            let (mut send, mut receive) = connection.accept_bi().await?;
+            let request = receive
+                .read_to_end(1024)
+                .await
+                .map_err(AcceptError::from_err)?;
+            send.write_all(&request)
+                .await
+                .map_err(AcceptError::from_err)?;
+            send.finish()?;
+            send.stopped().await.map_err(AcceptError::from_err)?;
+            Ok(())
+        }
+    }
 
     /// Helper to create a machine and manager protocol pair with temp directories
     ///
@@ -393,6 +421,57 @@ mod tests {
         assert_machine_claimed_by_manager(&machine_protocol, &manager_protocol).await?;
         assert_eq!(manager_protocol.list_machines().await?.len(), 1);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_custom_protocol_only_accepts_the_claimed_manager() -> anyhow::Result<()> {
+        let machine_temp = tempfile::tempdir()?;
+        let manager_temp = tempfile::tempdir()?;
+        let (accepted_tx, mut accepted_rx) = mpsc::unbounded_channel();
+        let protocol = AdditionalProtocol::new(
+            TEST_MANAGER_ALPN,
+            EchoHandler {
+                accepted_connections: accepted_tx,
+            },
+        )?;
+        let machine_protocol =
+            MachineProtocol::with_manager_protocols(machine_temp.path(), vec![protocol]).await?;
+        let manager_protocol = ManagerProtocol::new(manager_temp.path()).await?;
+
+        let outsider = Endpoint::bind(presets::N0).await?;
+        let outsider_connection = outsider
+            .connect(machine_protocol.endpoint_addr(), TEST_MANAGER_ALPN)
+            .await?;
+        outsider_connection.closed().await;
+        assert!(accepted_rx.try_recv().is_err());
+
+        let (_pin, machine_protocol, manager_protocol) =
+            perform_claim(machine_protocol, manager_protocol, true, true).await?;
+        wait_for_machines_listed(&manager_protocol, 1).await?;
+        let machine_id = manager_protocol.list_machines().await?[0].0;
+
+        let connection = manager_protocol
+            .connect_machine(&machine_id, TEST_MANAGER_ALPN)
+            .await?;
+        let (mut send, mut receive) = connection.open_bi().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        assert_eq!(receive.read_to_end(1024).await?, b"hello");
+        let accepted_manager = tokio::time::timeout(Duration::from_secs(5), accepted_rx.recv())
+            .await?
+            .context("custom protocol handler stopped")?;
+        assert_eq!(accepted_manager, manager_protocol.get_public_key());
+
+        let outsider_connection = outsider
+            .connect(machine_protocol.endpoint_addr(), TEST_MANAGER_ALPN)
+            .await?;
+        outsider_connection.closed().await;
+        assert!(accepted_rx.try_recv().is_err());
+
+        outsider.close().await;
+        machine_protocol.shutdown().await?;
+        manager_protocol.shutdown().await?;
         Ok(())
     }
 
