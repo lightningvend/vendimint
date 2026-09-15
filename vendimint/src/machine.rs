@@ -249,6 +249,46 @@ impl Machine {
             .await
     }
 
+    /// Creates or recovers one logical payment. Persist `request_id` before
+    /// calling. Retrying with the same parameters returns the original invoice,
+    /// never a replacement, even after expiry or a default-federation change.
+    /// Recovery is local; this method still requires the machine to be configured.
+    pub async fn receive_payment_idempotent(
+        &self,
+        request_id: [u8; 32],
+        amount: Amount,
+        expiry_secs: u32,
+        description: Bolt11InvoiceDescription,
+        gateway: Option<SafeUrl>,
+    ) -> anyhow::Result<fedimint_lnv2_remote_client::RemoteReceiveReceipt> {
+        let MachineState::Claimed(Some(config)) = self.iroh_protocol.get_machine_state().await?
+        else {
+            anyhow::bail!("Machine cannot accept payments as it is not configured");
+        };
+        self.wallet
+            .receive_payment_idempotent(
+                config.federation_invite_code.federation_id(),
+                config.claimer_pk,
+                request_id,
+                amount,
+                expiry_secs,
+                description,
+                gateway,
+            )
+            .await
+    }
+
+    /// Recovers a creation committed before a caller crashed or lost its reply.
+    /// Does not create or pay an invoice and does not require an online gateway,
+    /// manager, or current machine configuration. Inspect the final operation
+    /// state separately; a recovered invoice is not evidence of payment.
+    pub async fn recover_receive_payment(
+        &self,
+        request_id: [u8; 32],
+    ) -> anyhow::Result<Option<fedimint_lnv2_remote_client::RemoteReceiveReceipt>> {
+        self.wallet.recover_receive_payment(request_id).await
+    }
+
     /// Awaits the final state of an invoice created by [`Self::receive_payment`].
     pub async fn await_receive_payment_final_state(
         &self,

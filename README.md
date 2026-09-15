@@ -42,6 +42,31 @@ existing timed reclamation behavior. Mint-v2 exports do not automatically
 reclaim themselves, so callers must safeguard the returned token until it has
 been redeemed.
 
+### Recovering payment and export handoffs
+
+Persist an application request ID before calling
+`Machine::receive_payment_idempotent`. Retrying the same request returns its
+original invoice and operation ID, including after expiration. Vendimint
+coordinates requests across all joined federations, so changing the machine's
+configuration does not create a replacement invoice or redirect an existing
+request to a new recipient.
+
+`Machine::recover_receive_payment` looks up a receipt locally without creating
+an invoice. It works without a current machine configuration or online gateway
+once the wallet is open. Recovery is serialized with invoice creation; receipts
+in multiple federations are treated as an error rather than guessed at. A
+receipt does not prove funding: inspect the receive operation's final state
+separately. Do not automatically repeat a physical action after an uncertain
+application restart.
+
+Managers can recover mint-v1 and mint-v2 exports with `list_ecash_exports`.
+Each record includes the original encoded token, operation ID, creation time,
+and caller-supplied metadata from the wallet's atomic operation log. Save a
+unique attempt ID in that metadata to reconcile a crash before the application
+received the token. These are bearer secrets; do not log them or expose this
+history to untrusted clients. Records prove creation, not recipient redemption.
+Keep wallet operation history while applications may need export recovery.
+
 ### Key-Value Store Interface
 
 Vendimint provides a shared key-value store between machines and their managers for application-specific data exchange. The KV interface includes:

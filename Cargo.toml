@@ -33,7 +33,7 @@ fedimint-connectors = "0.11.1"
 fedimint-core = "0.11.1"
 fedimint-derive-secret = "0.11.1"
 fedimint-lnv2-common = "0.11.1"
-fedimint-lnv2-remote-client = "0.0.7"
+fedimint-lnv2-remote-client = { git = "https://github.com/tvolk131/fedimint-lnv2-remote-client.git", rev = "be9807289f72fd3bf0b1babfefa8c4ba3ffc0b58" }
 fedimint-mint-client = "0.11.1"
 fedimint-mintv2-client = "0.11.1"
 fedimint-rocksdb = "0.11.1"

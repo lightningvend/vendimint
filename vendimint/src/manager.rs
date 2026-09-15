@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
-use crate::fedimint_wallet::{EcashExport, MintVersion, Wallet};
+use crate::fedimint_wallet::{EcashExport, EcashExportRecord, MintVersion, Wallet};
 use crate::vendimint_iroh::{ClaimPin, KvEntry, MachineConfig, ManagerProtocol};
 use bitcoin::Network;
 use fedimint_core::Amount;
@@ -183,6 +183,21 @@ impl Manager {
         self.wallet
             .sweep_all_ecash_notes(federation_id, try_cancel_after, include_invite, extra_meta)
             .await
+    }
+
+    /// Recovers previously created bearer tokens from the durable wallet log.
+    /// This does not export additional funds or prove recipient redemption.
+    pub async fn list_ecash_exports(
+        &self,
+        federation_id: FederationId,
+    ) -> anyhow::Result<Vec<EcashExportRecord>> {
+        self.wallet.list_ecash_exports(federation_id).await
+    }
+
+    /// Includes previously used federations, even after machines switch to a
+    /// different federation. Their funds and export history still belong to us.
+    pub async fn list_wallet_federations(&self) -> Vec<FederationId> {
+        self.wallet.list_federation_ids().await
     }
 
     /// Makes completed payments syncable to the manager.

@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context, anyhow, bail};
@@ -24,14 +24,14 @@ use fedimint_core::{
     Amount,
     base32::{FEDIMINT_PREFIX, encode_prefixed},
     config::{ClientConfig, FederationId},
-    db::Database,
+    db::{Database, IDatabaseTransactionOpsCoreTyped as _},
     invite_code::InviteCode,
     util::SafeUrl,
 };
 use fedimint_lnv2_common::{Bolt11InvoiceDescription, ContractId};
 use fedimint_lnv2_remote_client::{
     ClaimableContract, FinalRemoteReceiveOperationState, LightningClientModule,
-    LightningRemoteClientInit,
+    LightningRemoteClientInit, RemoteReceiveReceipt, RemoteReceiveRequest,
 };
 use fedimint_mint_client::{
     MintClientInit as MintV1ClientInit, MintClientModule as MintV1ClientModule,
@@ -41,6 +41,7 @@ use fedimint_mintv2_client::{
     MintClientInit as MintV2ClientInit, MintClientModule as MintV2ClientModule,
 };
 use fedimint_rocksdb::RocksDb;
+use futures_util::StreamExt;
 use lightning_invoice::Bolt11Invoice;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, mpsc, oneshot, watch};
@@ -83,12 +84,44 @@ impl Display for MintVersion {
 }
 
 /// An encoded e-cash export produced by either supported mint generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct EcashExport {
     token: String,
     amount: Amount,
     mint_version: MintVersion,
     reclaims_automatically: bool,
+}
+
+impl std::fmt::Debug for EcashExport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EcashExport")
+            .field("amount", &self.amount)
+            .field("mint_version", &self.mint_version)
+            .field("reclaims_automatically", &self.reclaims_automatically)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An export recovered from the wallet's atomic operation log.
+///
+/// The record proves token creation, not recipient redemption. Keep operation
+/// history until applications no longer need these records for recovery.
+#[derive(Clone)]
+pub struct EcashExportRecord {
+    pub operation_id: OperationId,
+    pub created_at: SystemTime,
+    pub export: EcashExport,
+    pub extra_meta: serde_json::Value,
+}
+
+impl std::fmt::Debug for EcashExportRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EcashExportRecord")
+            .field("operation_id", &self.operation_id)
+            .field("created_at", &self.created_at)
+            .field("export", &self.export)
+            .finish_non_exhaustive()
+    }
 }
 
 impl EcashExport {
@@ -181,6 +214,7 @@ fn format_amount(amount: Amount) -> String {
 }
 
 pub struct Wallet {
+    receive_requests: Mutex<()>,
     root_secret: RootSecret,
     clients: Arc<RwLock<FederationClients>>,
     fedimint_clients_data_dir: Mutex<PathBuf>,
@@ -275,6 +309,7 @@ impl Wallet {
             .expect("Can never fail (see `new_master`'s implementation)");
 
         let wallet = Self {
+            receive_requests: Mutex::new(()),
             root_secret: get_root_secret(&xprivkey),
             clients,
             fedimint_clients_data_dir: Mutex::from(fedimint_clients_data_dir),
@@ -540,6 +575,81 @@ impl Wallet {
             .await?)
     }
 
+    /// Searches every joined federation, including previously configured ones.
+    /// The lock also prevents a false `None` while this process is creating the ID.
+    pub async fn recover_receive_payment(
+        &self,
+        request_id: [u8; 32],
+    ) -> anyhow::Result<Option<RemoteReceiveReceipt>> {
+        let _guard = self.receive_requests.lock().await;
+        let clients = self.clients.read().await;
+        Self::find_receive_receipt(&clients, request_id).await
+    }
+
+    async fn find_receive_receipt(
+        clients: &FederationClients,
+        request_id: [u8; 32],
+    ) -> anyhow::Result<Option<RemoteReceiveReceipt>> {
+        let mut found = None;
+        for federation in clients.values() {
+            let module = federation
+                .client
+                .get_first_module::<LightningClientModule>()
+                .context("the federation does not have a compatible lnv2 module")?;
+            if let Some(receipt) = module.recover_remote_receive(request_id).await {
+                anyhow::ensure!(
+                    found.is_none(),
+                    "receive request has receipts in multiple federations; operator review required"
+                );
+                found = Some(receipt);
+            }
+        }
+        Ok(found)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn receive_payment_idempotent(
+        &self,
+        federation_id: FederationId,
+        claimer_pk: PublicKey,
+        request_id: [u8; 32],
+        amount: Amount,
+        expiry_secs: u32,
+        description: Bolt11InvoiceDescription,
+        gateway: Option<SafeUrl>,
+    ) -> anyhow::Result<RemoteReceiveReceipt> {
+        // Request identities span federation changes. Concurrent creation through
+        // different configurations must never commit one invoice in each wallet.
+        let _guard = self.receive_requests.lock().await;
+        let clients = self.clients.read().await;
+        let existing = Self::find_receive_receipt(&clients, request_id).await?;
+        let request = RemoteReceiveRequest {
+            id: request_id,
+            claimer_pk: existing
+                .as_ref()
+                .map_or(claimer_pk, |receipt| receipt.claimer_pk),
+            amount,
+            expiry_secs,
+            description,
+            gateway,
+        };
+        if let Some(receipt) = existing {
+            anyhow::ensure!(
+                receipt.matches_request(&request),
+                "receive request ID was reused with different payment parameters"
+            );
+            return Ok(receipt);
+        }
+        let federation = clients
+            .get(&federation_id)
+            .ok_or_else(|| anyhow!("Client for federation {federation_id} not found"))?;
+        let module = federation
+            .client
+            .get_first_module::<LightningClientModule>()
+            .context("the federation does not have a compatible lnv2 module")?;
+        Ok(module.remote_receive_idempotent(request).await?)
+    }
+
     pub async fn await_receive_payment_final_state(
         &self,
         operation_id: OperationId,
@@ -663,6 +773,103 @@ impl Wallet {
                 }))
             }
         }
+    }
+
+    /// Recovers historical mint-v1 and mint-v2 sends, including sends whose
+    /// caller died before receiving the exported token. Reads the same operation
+    /// log transaction that removed the notes from the spendable balance.
+    pub async fn list_ecash_exports(
+        &self,
+        federation_id: FederationId,
+    ) -> anyhow::Result<Vec<EcashExportRecord>> {
+        let clients = self.clients.read().await;
+        let federation = clients
+            .get(&federation_id)
+            .ok_or_else(|| anyhow!("Client for federation {federation_id} not found"))?;
+        let database = federation.client.db().clone();
+        drop(clients);
+        Self::export_history(&database).await
+    }
+
+    async fn export_history(database: &Database) -> anyhow::Result<Vec<EcashExportRecord>> {
+        // Read a consistent snapshot of the complete chronological index.
+        // The UI pagination helper starts at wall-clock now + 30s, which can
+        // hide a committed export after clock rollback and make retry unsafe.
+        let mut transaction = database.begin_transaction_nc().await;
+        let keys = transaction
+            .find_by_prefix(&fedimint_client::db::ChronologicalOperationLogKeyPrefix)
+            .await
+            .map(|(key, ())| key)
+            .collect::<Vec<_>>()
+            .await;
+        let mut exports = Vec::new();
+        for key in keys {
+            let operation = fedimint_client::oplog::OperationLog::get_operation_dbtx(
+                &mut transaction.to_ref_nc(),
+                key.operation_id,
+            )
+            .await
+            .context("export recovery found an inconsistent wallet operation index")?;
+            let recovered = match operation.operation_module_kind() {
+                MINT_V1_KIND => {
+                    let meta = operation
+                        .try_meta::<fedimint_mint_client::MintOperationMeta>()
+                        .map_err(|_| anyhow!("could not decode mint-v1 export metadata"))?;
+                    let fedimint_mint_client::MintOperationMetaVariant::SpendOOB {
+                        oob_notes, ..
+                    } = meta.variant
+                    else {
+                        continue;
+                    };
+                    (
+                        EcashExport {
+                            token: oob_notes.to_string(),
+                            amount: oob_notes.total_amount(),
+                            mint_version: MintVersion::V1,
+                            reclaims_automatically: true,
+                        },
+                        meta.extra_meta,
+                    )
+                }
+                MINT_V2_KIND => {
+                    let meta = operation
+                        .try_meta::<fedimint_mintv2_client::MintOperationMeta>()
+                        .map_err(|_| anyhow!("could not decode mint-v2 export metadata"))?;
+                    let fedimint_mintv2_client::MintOperationMeta::Send { ecash, custom_meta } =
+                        meta
+                    else {
+                        continue;
+                    };
+                    let decoded: fedimint_mintv2_client::ECash =
+                        fedimint_core::base32::decode_prefixed(FEDIMINT_PREFIX, &ecash).map_err(
+                            |_| anyhow!("could not decode the historical mint-v2 export"),
+                        )?;
+                    (
+                        EcashExport {
+                            token: ecash,
+                            amount: decoded.amount(),
+                            mint_version: MintVersion::V2,
+                            reclaims_automatically: false,
+                        },
+                        custom_meta,
+                    )
+                }
+                _ => continue,
+            };
+            exports.push(EcashExportRecord {
+                operation_id: key.operation_id,
+                created_at: key.creation_time,
+                export: recovered.0,
+                extra_meta: recovered.1,
+            });
+        }
+        Ok(exports)
+    }
+
+    pub async fn list_federation_ids(&self) -> Vec<FederationId> {
+        let mut ids: Vec<_> = self.clients.read().await.keys().copied().collect();
+        ids.sort();
+        ids
     }
 
     /// Get claimable contracts from a federation.
@@ -986,6 +1193,180 @@ const fn coin_type_from_network(network_kind: NetworkKind) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn absent_receive_recovery_is_local_and_does_not_create_a_payment() {
+        let storage = tempfile::tempdir().unwrap();
+        let wallet = Wallet::new(storage.path().to_owned(), Network::Regtest)
+            .await
+            .unwrap();
+        let request_id = [17; 32];
+        assert!(
+            wallet
+                .recover_receive_payment(request_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let federation = "11".repeat(32).parse().unwrap();
+        let claimer = PublicKey::from_secret_key(
+            &Secp256k1::new(),
+            &bitcoin::secp256k1::SecretKey::from_slice(&[1; 32]).unwrap(),
+        );
+        assert!(
+            wallet
+                .receive_payment_idempotent(
+                    federation,
+                    claimer,
+                    request_id,
+                    Amount::from_sats(100),
+                    40,
+                    Bolt11InvoiceDescription::Direct("unjoined federation".to_owned()),
+                    None,
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            wallet
+                .recover_receive_payment(request_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(wallet.list_federation_ids().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn recovers_exports_older_than_one_page_and_after_clock_rollback() {
+        use fedimint_client::{
+            db::{ChronologicalOperationLogKey, ChronologicalOperationLogKeyPrefix},
+            oplog::OperationLog,
+        };
+        use fedimint_core::db::mem_impl::MemDatabase;
+        let database = Database::new(
+            MemDatabase::new(),
+            fedimint_core::module::registry::ModuleDecoderRegistry::default(),
+        );
+        let log = OperationLog::new(database.clone());
+        let federation: FederationId = "11".repeat(32).parse().unwrap();
+        let token = encode_prefixed(
+            FEDIMINT_PREFIX,
+            &fedimint_mintv2_client::ECash::new(federation, vec![]),
+        );
+        let meta = fedimint_mintv2_client::MintOperationMeta::Send {
+            ecash: token.clone(),
+            custom_meta: serde_json::json!({"test-secret": "private metadata"}),
+        };
+        let mut transaction = database.begin_transaction().await;
+        for byte in 0..140 {
+            log.add_operation_log_entry_dbtx(
+                &mut transaction.to_ref_nc(),
+                OperationId([byte; 32]),
+                MINT_V2_KIND,
+                &meta,
+            )
+            .await;
+        }
+        let keys = transaction
+            .find_by_prefix(&ChronologicalOperationLogKeyPrefix)
+            .await
+            .map(|(key, ())| key)
+            .collect::<Vec<_>>()
+            .await;
+        let future = SystemTime::now() + Duration::from_secs(86400);
+        for key in keys {
+            transaction.remove_entry(&key).await;
+            transaction
+                .insert_entry(
+                    &ChronologicalOperationLogKey {
+                        creation_time: future,
+                        operation_id: key.operation_id,
+                    },
+                    &(),
+                )
+                .await;
+        }
+        transaction.commit_tx().await;
+        let exports = Wallet::export_history(&database).await.unwrap();
+        assert_eq!(exports.len(), 140);
+        for record in &exports {
+            assert_eq!(record.export.to_string(), token);
+            assert_eq!(record.created_at, future);
+            assert_eq!(record.export.mint_version(), MintVersion::V2);
+            assert!(!record.export.reclaims_automatically());
+            assert_eq!(
+                record.extra_meta,
+                serde_json::json!({"test-secret": "private metadata"})
+            );
+        }
+        let debug = format!("{exports:?}");
+        assert!(!debug.contains(&token));
+        assert!(!debug.contains("private metadata"));
+    }
+
+    #[tokio::test]
+    async fn recovers_mint_v1_exports_and_rejects_corrupt_metadata_without_secrets() {
+        use fedimint_client::oplog::OperationLog;
+        use fedimint_core::db::mem_impl::MemDatabase;
+        let database = Database::new(
+            MemDatabase::new(),
+            fedimint_core::module::registry::ModuleDecoderRegistry::default(),
+        );
+        let log = OperationLog::new(database.clone());
+        let federation: FederationId = "11".repeat(32).parse().unwrap();
+        // Encoding fixture only: a nonempty tier is required by the v1 token
+        // decoder. This identity-point signature cannot represent real money.
+        let note = fedimint_mint_client::SpendableNote {
+            signature: serde_json::from_value(serde_json::json!(format!("c0{}", "00".repeat(47))))
+                .unwrap(),
+            spend_key: bitcoin::secp256k1::Keypair::from_secret_key(
+                &Secp256k1::new(),
+                &bitcoin::secp256k1::SecretKey::from_slice(&[1; 32]).unwrap(),
+            ),
+        };
+        let notes = fedimint_mint_client::OOBNotes::new(
+            federation.to_prefix(),
+            std::iter::once((Amount::from_sats(1), note)).collect(),
+        );
+        let meta = fedimint_mint_client::MintOperationMeta {
+            variant: fedimint_mint_client::MintOperationMetaVariant::SpendOOB {
+                requested_amount: Amount::ZERO,
+                oob_notes: notes.clone(),
+            },
+            amount: Amount::ZERO,
+            extra_meta: serde_json::json!({"test": "v1"}),
+        };
+        let mut transaction = database.begin_transaction().await;
+        log.add_operation_log_entry_dbtx(
+            &mut transaction.to_ref_nc(),
+            OperationId([1; 32]),
+            MINT_V1_KIND,
+            &meta,
+        )
+        .await;
+        transaction.commit_tx().await;
+        let exports = Wallet::export_history(&database).await.unwrap();
+        assert_eq!(exports.len(), 1);
+        assert_eq!(exports[0].export.to_string(), notes.to_string());
+        assert!(exports[0].export.reclaims_automatically());
+        assert_eq!(exports[0].export.mint_version(), MintVersion::V1);
+
+        let mut transaction = database.begin_transaction().await;
+        log.add_operation_log_entry_dbtx(
+            &mut transaction.to_ref_nc(),
+            OperationId([2; 32]),
+            MINT_V2_KIND,
+            fedimint_mintv2_client::MintOperationMeta::Send {
+                ecash: "BEARER-SECRET".to_owned(),
+                custom_meta: serde_json::Value::Null,
+            },
+        )
+        .await;
+        transaction.commit_tx().await;
+        let error = Wallet::export_history(&database).await.unwrap_err();
+        assert!(!format!("{error:#}").contains("BEARER-SECRET"));
+    }
 
     #[test]
     fn new_federations_prefer_mint_v2() {

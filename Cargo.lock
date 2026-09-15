@@ -3325,8 +3325,7 @@ dependencies = [
 [[package]]
 name = "fedimint-lnv2-remote-client"
 version = "0.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41fcf12e041994c2e482a777032b5a9190435d237bc8ab8568d25e152ba011d9"
+source = "git+https://github.com/tvolk131/fedimint-lnv2-remote-client.git?rev=be9807289f72fd3bf0b1babfefa8c4ba3ffc0b58#be9807289f72fd3bf0b1babfefa8c4ba3ffc0b58"
 dependencies = [
  "anyhow",
  "aquamarine 0.6.0",
