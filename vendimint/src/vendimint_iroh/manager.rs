@@ -1,3 +1,4 @@
+use anyhow::Context;
 use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
@@ -48,9 +49,25 @@ impl ManagerProtocol {
             app_storage_path: shared_protocol.app_storage_path,
         };
 
-        // Ensure the machine doc tickets directory exists.
-        let machine_doc_tickets_path = manager_protocol.get_machine_doc_ticket_path();
-        tokio::fs::create_dir_all(&machine_doc_tickets_path).await?;
+        let startup = async {
+            tokio::fs::create_dir_all(manager_protocol.get_machine_doc_ticket_path()).await?;
+            // Opening a persistent Docs store does not resume network sync.
+            // Re-importing is idempotent and starts sync with both the ticket's
+            // addresses and Iroh's remembered peers, even after a cold restart.
+            for (machine_id, ticket) in manager_protocol.list_machines().await? {
+                manager_protocol
+                    .docs
+                    .import(ticket)
+                    .await
+                    .with_context(|| format!("resume document sync for machine {machine_id}"))?;
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        if let Err(error) = startup {
+            let _ = manager_protocol.shutdown().await;
+            return Err(error);
+        }
 
         Ok(manager_protocol)
     }
@@ -65,6 +82,11 @@ impl ManagerProtocol {
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
         self.router.is_shutdown()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_endpoint(&self) -> &iroh::Endpoint {
+        self.router.endpoint()
     }
 
     pub async fn claim_machine(
@@ -152,11 +174,26 @@ impl ManagerProtocol {
         let mut read_dir = tokio::fs::read_dir(machine_doc_tickets_path).await?;
         while let Some(entry) = read_dir.next_entry().await? {
             if entry.file_type().await?.is_file() {
-                let file_name = entry.file_name().into_string().unwrap();
-                let machine_id = EndpointId::from_str(&file_name).unwrap();
+                let file_name = entry.file_name().into_string().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid machine ticket filename",
+                    )
+                })?;
+                let machine_id = EndpointId::from_str(&file_name).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid machine ID in ticket filename",
+                    )
+                })?;
                 let machine_doc_ticket_str = tokio::fs::read_to_string(entry.path()).await?;
-                let machine_doc_ticket: DocTicket =
-                    serde_json::from_str(&machine_doc_ticket_str).unwrap();
+                let machine_doc_ticket: DocTicket = serde_json::from_str(&machine_doc_ticket_str)
+                    .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid machine document ticket",
+                    )
+                })?;
                 machines.push((machine_id, machine_doc_ticket));
             }
         }

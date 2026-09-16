@@ -69,6 +69,12 @@ Keep wallet operation history while applications may need export recovery.
 
 ### Key-Value Store Interface
 
+Document synchronization resumes automatically on startup for existing pairings,
+including payment claims, machine configuration, and shared KV data. Either peer
+may start while the other is offline; queued records synchronize when both are
+reachable. Keep the original storage directories and identities when restarting.
+There is no need to claim the machine again to resume synchronization.
+
 Vendimint provides a shared key-value store between machines and their managers for application-specific data exchange. The KV interface includes:
 
 - **`KvEntry`** - Represents a key-value pair with metadata including the author (which device wrote it) and timestamp

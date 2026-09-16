@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Context;
 use fedimint_core::config::FederationId;
 use fedimint_lnv2_remote_client::ClaimableContract;
 use futures_util::StreamExt;
@@ -236,14 +237,44 @@ impl MachineProtocol {
             shared_protocol.router_builder = shared_protocol.router_builder.accept(alpn, handler);
         }
 
-        Ok(Self {
+        let machine_protocol = Self {
             router: shared_protocol.router_builder.spawn(),
             blobs: shared_protocol.blobs,
             docs: shared_protocol.docs,
             app_storage_path: shared_protocol.app_storage_path,
             claim_request_receiver: Mutex::new(rx),
             claimed_manager_pubkey,
-        })
+        };
+
+        if let Some(manager) = manager_public_key_or
+            && let Err(error) = machine_protocol.resume_document_sync(manager).await
+        {
+            let _ = machine_protocol.shutdown().await;
+            return Err(error.context("resume machine document sync"));
+        }
+
+        Ok(machine_protocol)
+    }
+
+    async fn resume_document_sync(&self, manager: PublicKey) -> anyhow::Result<()> {
+        // Do not create a replacement document if a claimed machine's ticket is
+        // missing or corrupt: its manager still holds the original capability.
+        let ticket_bytes = tokio::fs::read(self.app_storage_path.join(MACHINE_DOC_TICKET_PATH))
+            .await
+            .context("read claimed machine's document ticket")?;
+        let ticket: DocTicket = serde_json::from_slice(&ticket_bytes)
+            .context("decode claimed machine's document ticket")?;
+        let doc = self
+            .docs
+            .open(ticket.capability.id())
+            .await?
+            .context("claimed machine document is missing")?;
+        // Merely opening a document does not enable sync or incoming requests.
+        // Seed the paired manager even if the last process stopped before Iroh
+        // saved any useful peers. Discovery resolves its current addresses.
+        // This schedules reconnection; it does not wait for the manager online.
+        doc.start_sync(vec![manager.into()]).await?;
+        Ok(())
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
@@ -273,6 +304,11 @@ impl MachineProtocol {
     #[cfg(test)]
     pub fn endpoint_addr(&self) -> EndpointAddr {
         self.router.endpoint().addr()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_endpoint(&self) -> &iroh::Endpoint {
+        self.router.endpoint()
     }
 
     pub async fn await_next_incoming_claim_request(

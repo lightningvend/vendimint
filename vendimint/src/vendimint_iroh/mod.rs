@@ -251,13 +251,17 @@ mod tests {
     }
 
     fn create_test_federation_id_and_claimable_contract() -> (FederationId, ClaimableContract) {
+        create_test_contract_with_nonce(127)
+    }
+
+    fn create_test_contract_with_nonce(nonce: u8) -> (FederationId, ClaimableContract) {
         let pk = get_test_public_key();
         let federation_id = FederationId::dummy();
 
         let dummy_claimable_contract = ClaimableContract {
             contract: IncomingContract::new(
                 AggregatePublicKey(G1Affine::identity()),
-                [127; 32],
+                [nonce; 32],
                 [255; 32],
                 PaymentImage::Point(pk),
                 Amount { msats: 1234 },
@@ -1066,6 +1070,218 @@ mod tests {
         assert_eq!(retrieved_config, Some(machine_config));
 
         Ok(())
+    }
+
+    enum Restart {
+        Manager,
+        Machine,
+        BothMachineFirst,
+        BothManagerFirst,
+    }
+
+    fn use_local_peer_addresses(
+        machine: &MachineProtocol,
+        manager: &ManagerProtocol,
+    ) -> anyhow::Result<()> {
+        // Focus on document activation, not public DNS replacing addresses for
+        // the sockets we just stopped. This does NOT import/share/start sync.
+        for (local, peer) in [
+            (machine.test_endpoint(), manager.test_endpoint()),
+            (manager.test_endpoint(), machine.test_endpoint()),
+        ] {
+            let mut addr = iroh::EndpointAddr::new(peer.id());
+            for socket in peer.bound_sockets() {
+                let ip = if socket.is_ipv4() {
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+                } else {
+                    std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+                };
+                addr = addr.with_ip_addr(std::net::SocketAddr::new(ip, socket.port()));
+            }
+            local
+                .address_lookup()?
+                .add(iroh::address_lookup::memory::MemoryLookup::from_endpoint_info([addr]));
+        }
+        Ok(())
+    }
+
+    /// Exercise the document transport, not a wallet: all contracts are synthetic
+    /// and all protocol state lives in disposable directories.
+    #[allow(clippy::too_many_lines)]
+    async fn verify_sync_after_restart(restart: Restart) -> anyhow::Result<()> {
+        let (machine, manager, machine_temp, manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+        let machine_id = machine.endpoint_addr().id;
+        let (federation_id, old_contract) = create_test_contract_with_nonce(0);
+        write_and_sync_contract(&machine, &manager, &federation_id, &old_contract).await?;
+        manager
+            .remove_claimable_contracts(manager.get_claimable_contracts().await?)
+            .await?;
+
+        let mut machine = Some(machine);
+        let mut manager = Some(manager);
+        if !matches!(restart, Restart::Manager) {
+            let stopped = machine.take().unwrap();
+            stopped.shutdown().await?;
+            drop(stopped);
+        }
+        if !matches!(restart, Restart::Machine) {
+            let stopped = manager.take().unwrap();
+            stopped.shutdown().await?;
+            drop(stopped);
+        }
+
+        // In one order the manager starts without its machine; in the other the
+        // machine starts (and records payments) without its manager. Constructors
+        // must not wait for the offline peer to become reachable.
+        if matches!(restart, Restart::BothManagerFirst) {
+            manager = Some(
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    ManagerProtocol::new(manager_temp.path()),
+                )
+                .await??,
+            );
+        }
+        let config = create_test_machine_config();
+        if let Some(manager) = &manager {
+            manager.set_machine_config(&machine_id, &config).await?;
+        }
+        let machine = match machine {
+            Some(machine) => machine,
+            None => {
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    MachineProtocol::new(machine_temp.path()),
+                )
+                .await??
+            }
+        };
+        assert_eq!(machine.endpoint_addr().id, machine_id);
+
+        let (_, first_contract) = create_test_contract_with_nonce(1);
+        let (_, second_contract) = create_test_contract_with_nonce(2);
+        for contract in [&first_contract, &second_contract] {
+            machine
+                .write_payment_to_machine_doc(&federation_id, contract)
+                .await?;
+        }
+        let manager = match manager {
+            Some(manager) => manager,
+            None => {
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    ManagerProtocol::new(manager_temp.path()),
+                )
+                .await??
+            }
+        };
+        use_local_peer_addresses(&machine, &manager)?;
+        assert_eq!(manager.list_machines().await?.len(), 1);
+        assert_eq!(
+            machine.get_manager_pubkey().await,
+            Some(manager.get_public_key())
+        );
+        manager.set_machine_config(&machine_id, &config).await?;
+
+        // Count alone is insufficient: the deleted old payment must not reappear,
+        // and both contract bodies (not just document entries) must arrive.
+        let expected_ids = [
+            first_contract.contract.contract_id(),
+            second_contract.contract.contract_id(),
+        ];
+        let sync_result = wait_for_condition(
+            || async {
+                let Ok(contracts) = manager.get_claimable_contracts().await else {
+                    return false;
+                };
+                let actual_ids = contracts
+                    .iter()
+                    .map(|(_, _, contract)| contract.contract.contract_id())
+                    .collect::<Vec<_>>();
+                actual_ids.len() == expected_ids.len()
+                    && expected_ids.iter().all(|id| actual_ids.contains(id))
+                    && contracts
+                        .iter()
+                        .all(|(id, fed, _)| *id == machine_id && *fed == federation_id)
+                    && machine.get_machine_config().await.ok().flatten().as_ref() == Some(&config)
+            },
+            300,
+        )
+        .await
+        .context("payment/config sync did not resume after restart");
+
+        machine.shutdown().await?;
+        manager.shutdown().await?;
+        sync_result
+    }
+
+    #[tokio::test]
+    async fn test_document_sync_after_manager_restart() -> anyhow::Result<()> {
+        verify_sync_after_restart(Restart::Manager).await
+    }
+
+    #[tokio::test]
+    async fn test_document_sync_after_machine_restart() -> anyhow::Result<()> {
+        verify_sync_after_restart(Restart::Machine).await
+    }
+
+    #[tokio::test]
+    async fn test_document_sync_after_both_restart_machine_first() -> anyhow::Result<()> {
+        verify_sync_after_restart(Restart::BothMachineFirst).await
+    }
+
+    #[tokio::test]
+    async fn test_document_sync_after_both_restart_manager_first() -> anyhow::Result<()> {
+        verify_sync_after_restart(Restart::BothManagerFirst).await
+    }
+
+    #[tokio::test]
+    async fn test_manager_restart_rejects_invalid_tickets_without_panicking() -> anyhow::Result<()>
+    {
+        let storage = tempfile::tempdir()?;
+        let manager = ManagerProtocol::new(storage.path()).await?;
+        manager.shutdown().await?;
+        drop(manager);
+
+        for filename in [
+            "not-a-machine".to_owned(),
+            create_dummy_endpoint_id().to_string(),
+        ] {
+            let path = storage
+                .path()
+                .join("app/machine_doc_tickets")
+                .join(filename);
+            tokio::fs::write(&path, b"invalid ticket").await?;
+            assert!(ManagerProtocol::new(storage.path()).await.is_err());
+            // A failed startup must preserve the record and release its stores.
+            assert_eq!(tokio::fs::read(&path).await?, b"invalid ticket");
+            tokio::fs::remove_file(&path).await?;
+        }
+        let manager = ManagerProtocol::new(storage.path()).await?;
+        manager.shutdown().await
+    }
+
+    #[tokio::test]
+    async fn test_machine_restart_does_not_replace_invalid_ticket() -> anyhow::Result<()> {
+        let (machine, manager, machine_temp, _manager_temp) =
+            create_claimed_machine_manager_pair().await?;
+        machine.shutdown().await?;
+        drop(machine);
+
+        let path = machine_temp.path().join("app/machine_doc_ticket.json");
+        let original = tokio::fs::read(&path).await?;
+        tokio::fs::write(&path, b"invalid ticket").await?;
+        assert!(MachineProtocol::new(machine_temp.path()).await.is_err());
+        assert_eq!(tokio::fs::read(&path).await?, b"invalid ticket");
+        tokio::fs::write(&path, original).await?;
+        let machine = MachineProtocol::new(machine_temp.path()).await?;
+        assert_eq!(
+            machine.get_manager_pubkey().await,
+            Some(manager.get_public_key())
+        );
+        machine.shutdown().await?;
+        manager.shutdown().await
     }
 
     #[tokio::test]
